@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="artifacts/KGenView-1.2-toolbar.png" alt="KGen View mostrando una imagen en modo oscuro" width="720">
+  <img alt="KGen View mostrando una imagen en modo oscuro" width="720" src="https://github.com/user-attachments/assets/361ad751-23a9-4047-892d-4c63a3e0cdb2" />
 </p>
 
 KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está construido como una aplicación Win32 nativa en Rust, con decodificación mediante Windows Imaging Component (WIC) y renderizado acelerado con Direct2D. El resultado es una herramienta pequeña, directa y cómoda para abrir imágenes, recorrer carpetas y hacer ajustes rápidos sin convertir el visor en un editor pesado.
