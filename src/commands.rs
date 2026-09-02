@@ -1,0 +1,32 @@
+//! Stable command identifiers shared by menus, shortcuts and the custom toolbar.
+
+pub const OPEN: usize = 100;
+pub const SAVE_AS: usize = 101;
+pub const EXIT: usize = 102;
+pub const UNDO: usize = 110;
+pub const REDO: usize = 111;
+pub const COPY: usize = 112;
+pub const CROP: usize = 113;
+pub const DELETE: usize = 114;
+pub const ROTATE_LEFT: usize = 120;
+pub const ROTATE_RIGHT: usize = 121;
+pub const FLIP_H: usize = 122;
+pub const FLIP_V: usize = 123;
+pub const PREVIOUS: usize = 130;
+pub const NEXT: usize = 131;
+pub const ACTUAL: usize = 132;
+pub const FIT: usize = 133;
+pub const FIT_WIDTH: usize = 134;
+pub const FULLSCREEN: usize = 135;
+pub const SLIDESHOW: usize = 136;
+pub const RELOAD: usize = 137;
+pub const PAUSE_ANIMATION: usize = 138;
+pub const INFO: usize = 140;
+pub const OPEN_FOLDER: usize = 141;
+pub const COPY_PATH: usize = 142;
+pub const PREVIOUS_FRAME: usize = 143;
+pub const NEXT_FRAME: usize = 144;
+pub const LANGUAGE: usize = 150;
+pub const THEME: usize = 151;
+pub const ABOUT: usize = 160;
+pub const COPY_URL: usize = 161;
