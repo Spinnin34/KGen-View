@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="artifacts/KGenView-1.2-toolbar.png" alt="KGen View mostrando una imagen en modo oscuro" width="720">
+  <img src="https://private-user-images.githubusercontent.com/123275059/644712865-361ad751-23a9-4047-892d-4c63a3e0cdb2.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3OTA5NTQ1ODMsIm5iZiI6MTc5MDk1NDI4MywicGF0aCI6Ii8xMjMyNzUwNTkvNjQ0NzEyODY1LTM2MWFkNzUxLTIzYTktNDA0Ny04OTJkLTRjNjNhM2UwY2RiMi5wbmc_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1BS0lBVkNPRFlMU0E1M1BRSzRaQSUyRjIwMjYxMDAyJTJGdXMtZWFzdC0xJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI2MTAwMlQxNTE4MDNaJlgtQW16LUV4cGlyZXM9MzAwJlgtQW16LVNpZ25hdHVyZT1iZjcxNzY1OGU2ZjZjZTNkZGE3NjkzZTIzNjcxN2Y4ZTA1NjkzNTYyYjdmMjIzNWEwZTU0MTliOGE3YjIzNWUxJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCZyZXNwb25zZS1jb250ZW50LXR5cGU9aW1hZ2UlMkZwbmcifQ.djy2Ss6Xd3Gg7EniaVZsCofPAvqaOtpCPFyFCJ6FIsg" alt="KGen View mostrando una imagen en modo oscuro" width="720">
 </p>
 
 KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está construido como una aplicación Win32 nativa en Rust, con decodificación mediante Windows Imaging Component (WIC) y renderizado acelerado con Direct2D. El resultado es una herramienta pequeña, directa y cómoda para abrir imágenes, recorrer carpetas y hacer ajustes rápidos sin convertir el visor en un editor pesado.
