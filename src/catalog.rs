@@ -7,7 +7,7 @@ use std::{
 
 const EXTENSIONS: &[&str] = &[
     "bmp", "dib", "jpg", "jpeg", "jpe", "png", "gif", "tif", "tiff", "ico", "webp", "heic", "heif",
-    "wdp", "jxr", "hdp", "dds", "svg",
+    "jxl", "wdp", "jxr", "hdp", "dds", "svg",
 ];
 
 #[derive(Default, Debug, Clone)]

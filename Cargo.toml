@@ -8,6 +8,7 @@ build = "build.rs"
 
 [dependencies]
 gif = "0.14.2"
+jxl-oxide = { version = "0.12.6", features = ["moxcms"] }
 resvg = "0.45.0"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",

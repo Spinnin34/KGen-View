@@ -78,6 +78,9 @@ Root: HKCU; Subkey: "Software\Classes\KGenView.ico\shell\open\command"; ValueTyp
 Root: HKCU; Subkey: "Software\Classes\KGenView.heic"; ValueType: string; ValueName: ""; ValueData: "Imagen HEIC de KGen View"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\KGenView.heic\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icons\heic.ico"
 Root: HKCU; Subkey: "Software\Classes\KGenView.heic\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\KGenView.jxl"; ValueType: string; ValueName: ""; ValueData: "Imagen JPEG XL de KGen View"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\KGenView.jxl\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKCU; Subkey: "Software\Classes\KGenView.jxl\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 Root: HKCU; Subkey: "Software\Classes\KGenView.svg"; ValueType: string; ValueName: ""; ValueData: "Imagen Vectorial SVG de KGen View"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\KGenView.svg\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icons\svg.ico"
 Root: HKCU; Subkey: "Software\Classes\KGenView.svg\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
@@ -95,6 +98,7 @@ Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".webp"; ValueData: "KGenView.webp"
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".heic"; ValueData: "KGenView.heic"
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".heif"; ValueData: "KGenView.heic"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".jxl"; ValueData: "KGenView.jxl"
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".svg"; ValueData: "KGenView.svg"
 
 Root: HKCU; Subkey: "Software\Classes\.bmp\OpenWithProgids"; ValueType: none; ValueName: "KGenView.bmp"; Flags: uninsdeletevalue
@@ -110,6 +114,7 @@ Root: HKCU; Subkey: "Software\Classes\.ico\OpenWithProgids"; ValueType: none; Va
 Root: HKCU; Subkey: "Software\Classes\.webp\OpenWithProgids"; ValueType: none; ValueName: "KGenView.webp"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.heic\OpenWithProgids"; ValueType: none; ValueName: "KGenView.heic"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.heif\OpenWithProgids"; ValueType: none; ValueName: "KGenView.heic"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.jxl\OpenWithProgids"; ValueType: none; ValueName: "KGenView.jxl"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.svg\OpenWithProgids"; ValueType: none; ValueName: "KGenView.svg"; Flags: uninsdeletevalue
 
 [Run]
@@ -118,7 +123,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,KGen View}"; 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  Extensions: array[0..12] of String;
+  Extensions: array[0..13] of String;
   I: Integer;
 begin
   if CurStep = ssPostInstall then
@@ -127,8 +132,8 @@ begin
     Extensions[3] := '.jpeg'; Extensions[4] := '.jpe'; Extensions[5] := '.png';
     Extensions[6] := '.gif'; Extensions[7] := '.tif'; Extensions[8] := '.tiff';
     Extensions[9] := '.ico'; Extensions[10] := '.webp'; Extensions[11] := '.heic';
-    Extensions[12] := '.heif';
-    for I := 0 to 12 do
+    Extensions[12] := '.heif'; Extensions[13] := '.jxl';
+    for I := 0 to 13 do
       RegDeleteValue(HKCU, 'Software\Classes\' + Extensions[I] + '\OpenWithProgids', 'KGenView.Image');
     RegDeleteValue(HKCU, 'Software\Classes\.jpeg\OpenWithProgids', 'KGenView.jpg');
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\KGenView.Image');

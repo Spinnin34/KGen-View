@@ -99,6 +99,13 @@ impl ImageDocument {
         {
             return decode_svg(&path);
         }
+        if path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("jxl"))
+        {
+            return decode_jxl(&path);
+        }
         let factory: IWICImagingFactory =
             unsafe { CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)? };
         let wide = wide_path(&path);
@@ -658,6 +665,96 @@ fn decode_svg(path: &Path) -> ImageResult<ImageDocument> {
         frame_index: 0,
         file_size,
         format_name: "SVG".into(),
+        metadata: Vec::new(),
+        dirty: false,
+        undo: Vec::new(),
+        redo: Vec::new(),
+    })
+}
+
+fn decode_jxl(path: &Path) -> ImageResult<ImageDocument> {
+    let file_size = fs::metadata(path)?.len();
+    if file_size > MAX_DECODE_BYTES {
+        return Err(ImageError(
+            "El archivo JPEG XL supera el límite de 512 MiB.".into(),
+        ));
+    }
+
+    let tracker = jxl_oxide::AllocTracker::with_limit(MAX_DECODE_BYTES as usize);
+    let mut decoder = jxl_oxide::JxlImage::builder()
+        .alloc_tracker(tracker)
+        .open(path)
+        .map_err(|error| ImageError(format!("No se pudo decodificar JPEG XL: {error}")))?;
+    let width = decoder.width();
+    let height = decoder.height();
+    validate_dimensions(width, height)?;
+
+    let pixel_bytes = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| ImageError("Dimensiones JPEG XL no válidas.".into()))?;
+    if pixel_bytes > MAX_DECODE_BYTES {
+        return Err(ImageError(
+            "La imagen JPEG XL supera el límite de 512 MiB.".into(),
+        ));
+    }
+
+    decoder.set_cms(jxl_oxide::Moxcms);
+    decoder.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
+    let render = decoder
+        .render_frame(0)
+        .map_err(|error| ImageError(format!("No se pudo renderizar JPEG XL: {error}")))?;
+    let mut stream = render.stream();
+    let channels = stream.channels() as usize;
+    if !(3..=4).contains(&channels) {
+        return Err(ImageError(
+            "JPEG XL produjo un formato de píxel no compatible.".into(),
+        ));
+    }
+    let sample_count = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(channels))
+        .ok_or_else(|| ImageError("Dimensiones JPEG XL no válidas.".into()))?;
+    let mut samples = vec![0u8; sample_count];
+    let written = stream.write_to_buffer(&mut samples);
+    if written != sample_count {
+        return Err(ImageError(
+            "No se pudieron leer los píxeles JPEG XL.".into(),
+        ));
+    }
+
+    let mut pixels = vec![0u8; pixel_bytes as usize];
+    for (source, target) in samples
+        .chunks_exact(channels)
+        .zip(pixels.chunks_exact_mut(4))
+    {
+        let (red, green, blue, alpha) = if channels == 4 {
+            (source[0], source[1], source[2], source[3])
+        } else {
+            (source[0], source[1], source[2], 255)
+        };
+        let premultiply = |color: u8| ((u16::from(color) * u16::from(alpha) + 127) / 255) as u8;
+        target.copy_from_slice(&[
+            premultiply(blue),
+            premultiply(green),
+            premultiply(red),
+            alpha,
+        ]);
+    }
+
+    Ok(ImageDocument {
+        path: path.to_path_buf(),
+        frames: vec![Frame {
+            width,
+            height,
+            pixels,
+            delay_ms: 100,
+        }],
+        frame_index: 0,
+        file_size,
+        format_name: "JPEG XL".into(),
         metadata: Vec::new(),
         dirty: false,
         undo: Vec::new(),

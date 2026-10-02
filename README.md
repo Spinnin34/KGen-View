@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img alt="KGen View mostrando una imagen en modo oscuro" width="720" src="https://github.com/user-attachments/assets/361ad751-23a9-4047-892d-4c63a3e0cdb2" />
+  <img src="artifacts/KGenView-1.2-toolbar.png" alt="KGen View mostrando una imagen en modo oscuro" width="720">
 </p>
 
 KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está construido como una aplicación Win32 nativa en Rust, con decodificación mediante Windows Imaging Component (WIC) y renderizado acelerado con Direct2D. El resultado es una herramienta pequeña, directa y cómoda para abrir imágenes, recorrer carpetas y hacer ajustes rápidos sin convertir el visor en un editor pesado.
@@ -56,10 +56,11 @@ KGen View abre directamente los siguientes formatos:
 | Iconos | `.ico` |
 | WebP | `.webp` |
 | HEIF / HEIC | `.heif`, `.heic` |
+| JPEG XL | `.jxl` |
 | SVG | `.svg` |
 | Otros codecs WIC | `.wdp`, `.jxr`, `.hdp`, `.dds`, si el codec está disponible en Windows |
 
-WebP y HEIF/HEIC dependen de los codecs instalados en Windows. La aplicación muestra un aviso cuando el sistema no puede decodificar uno de estos formatos.
+WebP y HEIF/HEIC dependen de los codecs instalados en Windows. JPEG XL se decodifica dentro de KGen View, sin necesitar un codec adicional del sistema. La aplicación muestra un aviso cuando falta un codec necesario para WebP o HEIF/HEIC.
 
 ### Exportación
 
@@ -177,4 +178,3 @@ Para evitar cargas accidentales desproporcionadas, el decodificador limita las d
 ## Licencia
 
 KGen View se distribuye bajo la licencia MIT. Consulta [LICENSE](LICENSE) para ver el texto completo.
-
