@@ -2,18 +2,13 @@ impl AppState {
     fn new(settings: Settings) -> Result<Self, WinError> {
         let d2d_factory =
             unsafe { D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)? };
-        let export_formats = ImageDocument::available_export_formats().unwrap_or_default();
-        let selected_export_format = export_formats
-            .iter()
-            .position(|format| format.accepts_extension("png"))
-            .unwrap_or(0);
         let alive = Arc::new(AtomicBool::new(true));
         Ok(Self {
             hwnd: HWND::default(),
             settings,
             document: None,
-            export_formats,
-            selected_export_format,
+            export_formats: None,
+            selected_export_format: 0,
             active_path: None,
             catalog: FolderCatalog::default(),
             cache: Vec::new(),

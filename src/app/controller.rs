@@ -141,7 +141,7 @@ struct AppState {
     hwnd: HWND,
     settings: Settings,
     document: Option<ImageDocument>,
-    export_formats: Vec<crate::imaging::ExportFormat>,
+    export_formats: Option<Vec<crate::imaging::ExportFormat>>,
     selected_export_format: usize,
     active_path: Option<PathBuf>,
     catalog: FolderCatalog,

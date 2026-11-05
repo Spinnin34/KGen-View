@@ -17,7 +17,10 @@ use std::{
 
 use windows::Win32::{
     Foundation::{HWND, LPARAM, WPARAM},
-    System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize},
+    System::{
+        Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize},
+        Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL},
+    },
     UI::WindowsAndMessaging::PostMessageW,
 };
 
@@ -141,6 +144,11 @@ impl DecodeService {
         thread::Builder::new()
             .name("kgen-prefetch".into())
             .spawn(move || {
+                // Speculative decoding should give way immediately to the
+                // foreground decode and UI when both are runnable.
+                let _ = unsafe {
+                    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)
+                };
                 let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok();
                 let wic_factory = ImageDocument::create_wic_factory().ok();
                 loop {

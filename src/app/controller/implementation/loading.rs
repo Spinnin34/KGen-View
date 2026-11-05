@@ -168,6 +168,7 @@ impl AppState {
         let candidates: Vec<PathBuf> = offsets
             .into_iter()
             .filter_map(|offset| self.catalog.adjacent_wrapped(offset))
+            .filter(|path| self.active_path.as_ref() != Some(path))
             .filter(|path| !self.cache.iter().any(|(cached, _)| cached == path))
             .collect();
         self.loader

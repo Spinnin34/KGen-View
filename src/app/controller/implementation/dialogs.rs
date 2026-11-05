@@ -1,4 +1,18 @@
 impl AppState {
+    fn ensure_export_formats(&mut self) -> bool {
+        if self.export_formats.is_none() {
+            let formats = ImageDocument::available_export_formats().unwrap_or_default();
+            self.selected_export_format = formats
+                .iter()
+                .position(|format| format.accepts_extension("png"))
+                .unwrap_or(0);
+            self.export_formats = Some(formats);
+        }
+        self.export_formats
+            .as_ref()
+            .is_some_and(|formats| !formats.is_empty())
+    }
+
     fn open_dialog(&mut self) {
         let mut buffer = vec![0u16; 32768];
         let filter = wide_with_nuls(
@@ -26,10 +40,10 @@ impl AppState {
     }
 
     fn save_as_dialog(&mut self) -> bool {
-        let Some(document) = &self.document else {
+        if self.document.is_none() {
             return false;
-        };
-        if self.export_formats.is_empty() {
+        }
+        if !self.ensure_export_formats() {
             self.show_error(if self.lang() == Language::Spanish {
                 "Windows no ofrece ningún codificador de imágenes en este equipo."
             } else {
@@ -37,6 +51,8 @@ impl AppState {
             });
             return false;
         }
+        let export_formats = self.export_formats.as_ref().unwrap();
+        let document = self.document.as_ref().unwrap();
         let mut buffer = vec![0u16; 32768];
         let extension = document
             .path
@@ -44,12 +60,11 @@ impl AppState {
             .and_then(|value| value.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        let default_format = self
-            .export_formats
+        let default_format = export_formats
             .iter()
             .position(|format| format.accepts_extension(&extension))
-            .unwrap_or(self.selected_export_format.min(self.export_formats.len() - 1));
-        let format = &self.export_formats[default_format];
+            .unwrap_or(self.selected_export_format.min(export_formats.len() - 1));
+        let format = export_formats[default_format].clone();
         let suggested = if format.accepts_extension(&extension) {
             document
                 .path
@@ -71,8 +86,8 @@ impl AppState {
         let suggested_w = wide(&suggested);
         let count = suggested_w.len().min(buffer.len());
         buffer[..count].copy_from_slice(&suggested_w[..count]);
-        let mut filter_parts = Vec::with_capacity(self.export_formats.len() * 2 + 2);
-        for format in &self.export_formats {
+        let mut filter_parts = Vec::with_capacity(export_formats.len() * 2 + 2);
+        for format in export_formats {
             filter_parts.push(format.filter_label());
             filter_parts.push(format.filter_pattern());
         }
@@ -104,15 +119,15 @@ impl AppState {
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or("");
-        let chosen_index = if dialog.nFilterIndex == 0 || filter_index >= self.export_formats.len() {
-            self.export_formats
+        let chosen_index = if dialog.nFilterIndex == 0 || filter_index >= export_formats.len() {
+            export_formats
                 .iter()
                 .position(|format| format.accepts_extension(path_extension))
                 .unwrap_or(default_format)
         } else {
             filter_index
         };
-        let format = &self.export_formats[chosen_index];
+        let format = export_formats[chosen_index].clone();
         let path_extension = path
             .extension()
             .and_then(|value| value.to_str())
@@ -124,7 +139,7 @@ impl AppState {
             .document
             .as_mut()
             .unwrap()
-            .save_as_format(&path, format);
+            .save_as_format(&path, &format);
         match result {
             Ok(()) => {
                 self.active_path = Some(path.clone());
@@ -151,10 +166,10 @@ impl AppState {
             }
             return;
         }
-        let Some(document) = &self.document else {
+        if self.document.is_none() {
             return;
-        };
-        if self.export_formats.is_empty() {
+        }
+        if !self.ensure_export_formats() {
             self.show_error(if self.lang() == Language::Spanish {
                 "No se encontró ningún formato de salida compatible en este equipo."
             } else {
@@ -162,12 +177,14 @@ impl AppState {
             });
             return;
         }
+        let document = self.document.as_ref().unwrap();
+        let export_formats = self.export_formats.as_ref().unwrap();
         let window = crate::platform::conversion_dialog::show(
             self.hwnd,
             self.settings.is_dark(),
             self.lang(),
             document,
-            self.export_formats.clone(),
+            export_formats.clone(),
             self.selected_export_format,
         );
         if let Some(window) = window {
