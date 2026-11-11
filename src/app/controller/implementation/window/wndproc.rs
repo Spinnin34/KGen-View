@@ -325,12 +325,11 @@ pub(super) unsafe extern "system" fn window_proc(
                 .mcp_requests
                 .as_ref()
                 .and_then(|receiver| receiver.try_recv().ok());
-            if let Some(request) = request {
-                if let Some(response) =
+            if let Some(request) = request
+                && let Some(response) =
                     state.handle_mcp_request(&request.message, request.reply.clone())
-                {
-                    let _ = request.reply.send(response);
-                }
+            {
+                let _ = request.reply.send(response);
             }
             LRESULT(0)
         }
