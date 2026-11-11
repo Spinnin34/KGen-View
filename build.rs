@@ -18,6 +18,7 @@ fn main() {
     let package_icon = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"))
         .join("target")
         .join("kgen-view.ico");
+    fs::create_dir_all(package_icon.parent().unwrap()).expect("create package resources directory");
     fs::write(&package_icon, &icon_bytes).expect("write package icon");
     let filetype_dir = package_icon.parent().unwrap().join("filetype-icons");
     fs::create_dir_all(&filetype_dir).expect("create filetype icon directory");

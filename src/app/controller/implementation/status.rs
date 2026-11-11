@@ -1,17 +1,20 @@
+use super::*;
+
 impl AppState {
-    fn invalidate_image(&mut self) {
-        self.bitmap = None;
+    pub(super) fn invalidate_image(&mut self) {
+        self.bitmap_dirty = true;
         unsafe {
             let _ = InvalidateRect(Some(self.hwnd), None, false);
         }
         self.update_status(None);
     }
 
-    fn update_status(&mut self, temporary: Option<&str>) {
+    pub(super) fn update_status(&mut self, temporary: Option<&str>) {
         self.status_model = if let Some(value) = temporary {
             StatusModel::message(value)
         } else if let Some(document) = &self.document {
             let frame = document.current_frame();
+            let (width, height) = document.view_dimensions();
             let folder = self
                 .catalog
                 .index
@@ -21,7 +24,7 @@ impl AppState {
             let ram_size = crate::platform::text::format_bytes_decimal(frame.pixels.len() as u64);
             let file_time = file_timestamp_short(&document.path);
             StatusModel {
-                primary: format!("{} x {} x 24 BPP", frame.width, frame.height),
+                primary: format!("{} x {} x 32 BPP", width, height),
                 position: Some(folder),
                 zoom: Some(format!("{:.0} %", self.zoom * 100.0)),
                 size: Some(format!("{} / {}", disk_size, ram_size)),
@@ -36,4 +39,3 @@ impl AppState {
         }
     }
 }
-

@@ -1,10 +1,11 @@
-use std::{ffi::c_void, fs, path::Path};
+use std::{ffi::c_void, fs, io::Read, mem::size_of, path::Path};
 
 use windows::{
     Win32::Networking::WinHttp::{
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WinHttpCloseHandle,
-        WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryDataAvailable,
-        WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle, WinHttpConnect, WinHttpOpen,
+        WinHttpOpenRequest, WinHttpQueryDataAvailable, WinHttpQueryHeaders, WinHttpReadData,
+        WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetTimeouts,
     },
     core::PCWSTR,
 };
@@ -12,6 +13,7 @@ use windows::{
 use crate::platform::text::wide;
 
 const MAX_UPLOAD_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 struct InternetHandle(*mut c_void);
 
@@ -26,11 +28,17 @@ impl Drop for InternetHandle {
 }
 
 pub fn upload(path: &Path, api_key: &str) -> Result<String, String> {
-    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
-    if metadata.len() > MAX_UPLOAD_BYTES {
+    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    if file.metadata().map_err(|error| error.to_string())?.len() > MAX_UPLOAD_BYTES {
         return Err("ImgBB admite imágenes de hasta 32 MiB.".into());
     }
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(MAX_UPLOAD_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_UPLOAD_BYTES {
+        return Err("ImgBB admite imágenes de hasta 32 MiB.".into());
+    }
     let boundary = "----KGenView7MA4YWxkTrZu0gW";
     let file_name = path
         .file_name()
@@ -66,6 +74,8 @@ pub fn upload(path: &Path, api_key: &str) -> Result<String, String> {
     if session.0.is_null() {
         return Err("No se pudo iniciar la conexión HTTPS.".into());
     }
+    unsafe { WinHttpSetTimeouts(session.0, 10_000, 10_000, 30_000, 30_000) }
+        .map_err(|error| format!("No se pudieron configurar los tiempos de espera: {error}"))?;
     let connection =
         InternetHandle(unsafe { WinHttpConnect(session.0, PCWSTR(host.as_ptr()), 443, 0) });
     if connection.0.is_null() {
@@ -101,6 +111,20 @@ pub fn upload(path: &Path, api_key: &str) -> Result<String, String> {
         WinHttpReceiveResponse(request.0, std::ptr::null_mut())
             .map_err(|error| format!("ImgBB no devolvió una respuesta: {error}"))?;
     }
+    let mut status_code = 0u32;
+    let mut status_bytes = size_of::<u32>() as u32;
+    let mut header_index = 0u32;
+    unsafe {
+        WinHttpQueryHeaders(
+            request.0,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            PCWSTR::null(),
+            Some((&mut status_code as *mut u32).cast()),
+            &mut status_bytes,
+            &mut header_index,
+        )
+    }
+    .map_err(|error| format!("No se pudo leer la respuesta de ImgBB: {error}"))?;
     let mut response = Vec::new();
     loop {
         let mut available = 0u32;
@@ -108,6 +132,9 @@ pub fn upload(path: &Path, api_key: &str) -> Result<String, String> {
             .map_err(|error| error.to_string())?;
         if available == 0 {
             break;
+        }
+        if response.len().saturating_add(available as usize) > MAX_RESPONSE_BYTES {
+            return Err("La respuesta de ImgBB supera el límite de 1 MiB.".into());
         }
         let offset = response.len();
         response.resize(offset + available as usize, 0);
@@ -124,8 +151,15 @@ pub fn upload(path: &Path, api_key: &str) -> Result<String, String> {
         response.truncate(offset + read as usize);
     }
     let json = String::from_utf8_lossy(&response);
+    if !(200..300).contains(&status_code) {
+        let details = json_field(&json, "message").or_else(|| json_field(&json, "error"));
+        return Err(details.map_or_else(
+            || format!("ImgBB respondió con HTTP {status_code}."),
+            |message| format!("ImgBB respondió con HTTP {status_code}: {message}"),
+        ));
+    }
     direct_url(&json).ok_or_else(|| {
-        if let Some(error) = json_field(&json, "error") {
+        if let Some(error) = json_field(&json, "message").or_else(|| json_field(&json, "error")) {
             format!("ImgBB: {error}")
         } else {
             "ImgBB no devolvió un enlace directo. Comprueba la clave API.".into()

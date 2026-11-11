@@ -2,6 +2,7 @@
 //! platform behavior independently testable and keeps `app` focused on workflow.
 
 pub mod clipboard;
+pub mod conversion_dialog;
 pub mod imgbb;
 pub mod menu;
 pub mod properties_dialog;

@@ -162,6 +162,7 @@ impl ChromeLayout {
             let gap = px(GROUP_GAP_DIP, scale);
             let edge = px(EDGE_DIP, scale);
             let mut x = edge;
+            let icons_right = width - edge;
             let mut cursor = 0;
             let items = toolbar_items();
             while cursor < items.len() {
@@ -175,12 +176,14 @@ impl ChromeLayout {
                 let group_rect = PxRect::new(
                     group_left,
                     menu_height + 2.0 * scale,
-                    group_right,
+                    group_right.min(icons_right),
                     toolbar.bottom - 3.0 * scale,
                 );
+                let mut group_fits = true;
                 for index in start..cursor {
                     let right = x + button;
-                    if right > width - edge {
+                    if right > icons_right {
+                        group_fits = false;
                         break;
                     }
                     placed.push(PlacedToolbarItem {
@@ -195,8 +198,11 @@ impl ChromeLayout {
                     });
                     x += button;
                 }
+                if !group_fits {
+                    break;
+                }
                 x += gap;
-                if x >= width - edge {
+                if x >= icons_right {
                     break;
                 }
             }

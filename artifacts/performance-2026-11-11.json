@@ -1,0 +1,844 @@
+{
+  "date": "2026-11-11",
+  "platform": "Windows x64",
+  "rustc": "1.99.0",
+  "profile": "release",
+  "comparison": "Original decode versus progressive 1920x1080 preview in the same optimized build.",
+  "limitations": [
+    "Five fresh processes per image and mode; OS file cache not purged.",
+    "Decoder/catalog measurements omit the window, GPU and input latency.",
+    "Reference hardware with 4 GB RAM has not been tested."
+  ],
+  "validation": {
+    "unit_tests_passed": 36,
+    "fmt_check_passed": true,
+    "clippy_passed": true,
+    "release_build_passed": true,
+    "ci_workflow_added": true,
+    "remote_ci_executed": false
+  },
+  "catalog_samples": [
+    {
+      "images": 10000,
+      "elapsed_ms": 16.728,
+      "peak_working_set_bytes": 16011264
+    },
+    {
+      "images": 100000,
+      "elapsed_ms": 121.085,
+      "peak_working_set_bytes": 41099264
+    }
+  ],
+  "images": [
+    {
+      "image": "photo-24mp.jpg",
+      "samples_per_mode": 5,
+      "original_median_ms": 191.035,
+      "preview_median_ms": 177.664,
+      "original_p95_ms": 197.126,
+      "preview_p95_ms": 197.497,
+      "original_peak_working_set_bytes": 111267840,
+      "preview_peak_working_set_bytes": 63033344,
+      "peak_working_set_reduction_percent": 43.35,
+      "original_samples": [
+        {
+          "elapsed_ms": 194.115,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5083136,
+          "peak_working_set_bytes": 111263744,
+          "managed_peak_bytes": 96000000
+        },
+        {
+          "elapsed_ms": 180.691,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5083136,
+          "peak_working_set_bytes": 111267840,
+          "managed_peak_bytes": 96000000
+        },
+        {
+          "elapsed_ms": 182.862,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5087232,
+          "peak_working_set_bytes": 111267840,
+          "managed_peak_bytes": 96000000
+        },
+        {
+          "elapsed_ms": 191.035,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5083136,
+          "peak_working_set_bytes": 111267840,
+          "managed_peak_bytes": 96000000
+        },
+        {
+          "elapsed_ms": 197.126,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5087232,
+          "peak_working_set_bytes": 111267840,
+          "managed_peak_bytes": 96000000
+        }
+      ],
+      "preview_samples": [
+        {
+          "elapsed_ms": 197.497,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5263360,
+          "peak_working_set_bytes": 63033344,
+          "managed_peak_bytes": 24000000
+        },
+        {
+          "elapsed_ms": 189.684,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5267456,
+          "peak_working_set_bytes": 63033344,
+          "managed_peak_bytes": 24000000
+        },
+        {
+          "elapsed_ms": 175.879,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5263360,
+          "peak_working_set_bytes": 63033344,
+          "managed_peak_bytes": 24000000
+        },
+        {
+          "elapsed_ms": 177.664,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5275648,
+          "peak_working_set_bytes": 63033344,
+          "managed_peak_bytes": 24000000
+        },
+        {
+          "elapsed_ms": 172.953,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5263360,
+          "peak_working_set_bytes": 63033344,
+          "managed_peak_bytes": 24000000
+        }
+      ]
+    },
+    {
+      "image": "photo-24mp.png",
+      "samples_per_mode": 5,
+      "original_median_ms": 305.698,
+      "preview_median_ms": 310.33,
+      "original_p95_ms": 310.222,
+      "preview_p95_ms": 361.572,
+      "original_peak_working_set_bytes": 111091712,
+      "preview_peak_working_set_bytes": 22331392,
+      "peak_working_set_reduction_percent": 79.9,
+      "original_samples": [
+        {
+          "elapsed_ms": 305.516,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5230592,
+          "peak_working_set_bytes": 111091712,
+          "managed_peak_bytes": 96000000
+        },
+        {
+          "elapsed_ms": 310.222,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5230592,
+          "peak_working_set_bytes": 111091712,
+          "managed_peak_bytes": 96000000
+        },
+        {
+          "elapsed_ms": 306.26,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5222400,
+          "peak_working_set_bytes": 111087616,
+          "managed_peak_bytes": 96000000
+        },
+        {
+          "elapsed_ms": 305.698,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5234688,
+          "peak_working_set_bytes": 111091712,
+          "managed_peak_bytes": 96000000
+        },
+        {
+          "elapsed_ms": 303.14,
+          "width": 6000,
+          "height": 4000,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 96000000,
+          "files": 0,
+          "private_bytes": 5226496,
+          "peak_working_set_bytes": 111091712,
+          "managed_peak_bytes": 96000000
+        }
+      ],
+      "preview_samples": [
+        {
+          "elapsed_ms": 361.572,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5566464,
+          "peak_working_set_bytes": 22331392,
+          "managed_peak_bytes": 6998400
+        },
+        {
+          "elapsed_ms": 309.251,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5566464,
+          "peak_working_set_bytes": 22327296,
+          "managed_peak_bytes": 6998400
+        },
+        {
+          "elapsed_ms": 310.33,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5570560,
+          "peak_working_set_bytes": 22331392,
+          "managed_peak_bytes": 6998400
+        },
+        {
+          "elapsed_ms": 314.489,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5570560,
+          "peak_working_set_bytes": 22331392,
+          "managed_peak_bytes": 6998400
+        },
+        {
+          "elapsed_ms": 310.142,
+          "width": 1620,
+          "height": 1080,
+          "original_width": 6000,
+          "original_height": 4000,
+          "pixel_bytes": 6998400,
+          "files": 0,
+          "private_bytes": 5558272,
+          "peak_working_set_bytes": 22331392,
+          "managed_peak_bytes": 6998400
+        }
+      ]
+    },
+    {
+      "image": "photo-2mp.jpg",
+      "samples_per_mode": 5,
+      "original_median_ms": 32.288,
+      "preview_median_ms": 28.959,
+      "original_p95_ms": 34.138,
+      "preview_p95_ms": 30.406,
+      "original_peak_working_set_bytes": 23420928,
+      "preview_peak_working_set_bytes": 23429120,
+      "peak_working_set_reduction_percent": -0.03,
+      "original_samples": [
+        {
+          "elapsed_ms": 34.138,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4952064,
+          "peak_working_set_bytes": 23420928,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 32.288,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4947968,
+          "peak_working_set_bytes": 23420928,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 33.238,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4947968,
+          "peak_working_set_bytes": 23420928,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 29.472,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4952064,
+          "peak_working_set_bytes": 23420928,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 28.63,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4947968,
+          "peak_working_set_bytes": 23420928,
+          "managed_peak_bytes": 8294400
+        }
+      ],
+      "preview_samples": [
+        {
+          "elapsed_ms": 30.406,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4943872,
+          "peak_working_set_bytes": 23379968,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 28.343,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4943872,
+          "peak_working_set_bytes": 23429120,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 28.959,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4947968,
+          "peak_working_set_bytes": 23429120,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 29.997,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4943872,
+          "peak_working_set_bytes": 23429120,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 28.169,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4943872,
+          "peak_working_set_bytes": 23429120,
+          "managed_peak_bytes": 8294400
+        }
+      ]
+    },
+    {
+      "image": "photo-2mp.png",
+      "samples_per_mode": 5,
+      "original_median_ms": 39.798,
+      "preview_median_ms": 38.371,
+      "original_p95_ms": 40.782,
+      "preview_p95_ms": 54.342,
+      "original_peak_working_set_bytes": 23334912,
+      "preview_peak_working_set_bytes": 23339008,
+      "peak_working_set_reduction_percent": -0.02,
+      "original_samples": [
+        {
+          "elapsed_ms": 38.651,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4997120,
+          "peak_working_set_bytes": 23334912,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 38.182,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4997120,
+          "peak_working_set_bytes": 23285760,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 40.782,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4997120,
+          "peak_working_set_bytes": 23334912,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 40.349,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4993024,
+          "peak_working_set_bytes": 23334912,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 39.798,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4997120,
+          "peak_working_set_bytes": 23334912,
+          "managed_peak_bytes": 8294400
+        }
+      ],
+      "preview_samples": [
+        {
+          "elapsed_ms": 54.342,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4993024,
+          "peak_working_set_bytes": 23339008,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 42.639,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4988928,
+          "peak_working_set_bytes": 23339008,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 38.127,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4997120,
+          "peak_working_set_bytes": 23339008,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 38.177,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 4988928,
+          "peak_working_set_bytes": 23339008,
+          "managed_peak_bytes": 8294400
+        },
+        {
+          "elapsed_ms": 38.371,
+          "width": 1920,
+          "height": 1080,
+          "original_width": 1920,
+          "original_height": 1080,
+          "pixel_bytes": 8294400,
+          "files": 0,
+          "private_bytes": 5001216,
+          "peak_working_set_bytes": 23339008,
+          "managed_peak_bytes": 8294400
+        }
+      ]
+    },
+    {
+      "image": "photo-60mp.jpg",
+      "samples_per_mode": 5,
+      "original_median_ms": 435.146,
+      "preview_median_ms": 371.822,
+      "original_p95_ms": 441.546,
+      "preview_p95_ms": 374.59,
+      "original_peak_working_set_bytes": 255401984,
+      "preview_peak_working_set_bytes": 45031424,
+      "peak_working_set_reduction_percent": 82.37,
+      "original_samples": [
+        {
+          "elapsed_ms": 441.546,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5222400,
+          "peak_working_set_bytes": 255401984,
+          "managed_peak_bytes": 240000000
+        },
+        {
+          "elapsed_ms": 430.646,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5226496,
+          "peak_working_set_bytes": 255401984,
+          "managed_peak_bytes": 240000000
+        },
+        {
+          "elapsed_ms": 435.146,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5230592,
+          "peak_working_set_bytes": 255401984,
+          "managed_peak_bytes": 240000000
+        },
+        {
+          "elapsed_ms": 432.542,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5234688,
+          "peak_working_set_bytes": 255401984,
+          "managed_peak_bytes": 240000000
+        },
+        {
+          "elapsed_ms": 436.653,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5226496,
+          "peak_working_set_bytes": 255401984,
+          "managed_peak_bytes": 240000000
+        }
+      ],
+      "preview_samples": [
+        {
+          "elapsed_ms": 365.92,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5263360,
+          "peak_working_set_bytes": 45031424,
+          "managed_peak_bytes": 15000000
+        },
+        {
+          "elapsed_ms": 374.59,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5255168,
+          "peak_working_set_bytes": 44982272,
+          "managed_peak_bytes": 15000000
+        },
+        {
+          "elapsed_ms": 369.279,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5267456,
+          "peak_working_set_bytes": 45031424,
+          "managed_peak_bytes": 15000000
+        },
+        {
+          "elapsed_ms": 371.822,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5263360,
+          "peak_working_set_bytes": 45031424,
+          "managed_peak_bytes": 15000000
+        },
+        {
+          "elapsed_ms": 374.289,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5267456,
+          "peak_working_set_bytes": 45031424,
+          "managed_peak_bytes": 15000000
+        }
+      ]
+    },
+    {
+      "image": "photo-60mp.png",
+      "samples_per_mode": 5,
+      "original_median_ms": 738.761,
+      "preview_median_ms": 760.926,
+      "original_p95_ms": 748.887,
+      "preview_p95_ms": 892.25,
+      "original_peak_working_set_bytes": 255139840,
+      "preview_peak_working_set_bytes": 23248896,
+      "peak_working_set_reduction_percent": 90.89,
+      "original_samples": [
+        {
+          "elapsed_ms": 735.951,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5464064,
+          "peak_working_set_bytes": 255139840,
+          "managed_peak_bytes": 240000000
+        },
+        {
+          "elapsed_ms": 738.761,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5459968,
+          "peak_working_set_bytes": 255139840,
+          "managed_peak_bytes": 240000000
+        },
+        {
+          "elapsed_ms": 738.658,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5459968,
+          "peak_working_set_bytes": 255139840,
+          "managed_peak_bytes": 240000000
+        },
+        {
+          "elapsed_ms": 748.887,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5459968,
+          "peak_working_set_bytes": 255139840,
+          "managed_peak_bytes": 240000000
+        },
+        {
+          "elapsed_ms": 748.058,
+          "width": 10000,
+          "height": 6000,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 240000000,
+          "files": 0,
+          "private_bytes": 5464064,
+          "peak_working_set_bytes": 255139840,
+          "managed_peak_bytes": 240000000
+        }
+      ],
+      "preview_samples": [
+        {
+          "elapsed_ms": 892.25,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5545984,
+          "peak_working_set_bytes": 23248896,
+          "managed_peak_bytes": 7776000
+        },
+        {
+          "elapsed_ms": 760.926,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5541888,
+          "peak_working_set_bytes": 23248896,
+          "managed_peak_bytes": 7776000
+        },
+        {
+          "elapsed_ms": 745.08,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5545984,
+          "peak_working_set_bytes": 23248896,
+          "managed_peak_bytes": 7776000
+        },
+        {
+          "elapsed_ms": 780.479,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5541888,
+          "peak_working_set_bytes": 23248896,
+          "managed_peak_bytes": 7776000
+        },
+        {
+          "elapsed_ms": 746.177,
+          "width": 1800,
+          "height": 1080,
+          "original_width": 10000,
+          "original_height": 6000,
+          "pixel_bytes": 7776000,
+          "files": 0,
+          "private_bytes": 5545984,
+          "peak_working_set_bytes": 23248896,
+          "managed_peak_bytes": 7776000
+        }
+      ]
+    }
+  ]
+}

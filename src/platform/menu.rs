@@ -41,7 +41,12 @@ pub struct ThemedMenu {
 }
 
 impl ThemedMenu {
-    pub fn new(hwnd: HWND, language: Language, dark: bool) -> Result<Self, WinError> {
+    pub fn new(
+        hwnd: HWND,
+        language: Language,
+        dark: bool,
+        always_on_top: bool,
+    ) -> Result<Self, WinError> {
         let background_color = if dark {
             COLORREF(0x001c1714)
         } else {
@@ -56,7 +61,7 @@ impl ThemedMenu {
             dark,
             scale: unsafe { GetDpiForWindow(hwnd) }.max(96) as f32 / 96.0,
         };
-        unsafe { menu.build(language)? };
+        unsafe { menu.build(language, always_on_top)? };
         Ok(menu)
     }
 
@@ -89,7 +94,7 @@ impl ThemedMenu {
         };
     }
 
-    unsafe fn build(&mut self, language: Language) -> Result<(), WinError> {
+    unsafe fn build(&mut self, language: Language, always_on_top: bool) -> Result<(), WinError> {
         let file = unsafe { CreatePopupMenu()? };
         unsafe {
             self.item(file, cmd::OPEN, tr(language, Text::Open))?;
@@ -108,6 +113,15 @@ impl ThemedMenu {
             self.item(edit, cmd::COPY, tr(language, Text::Copy))?;
             self.item(edit, cmd::COPY_URL, "Copiar enlace directo (ImgBB)")?;
             self.item(edit, cmd::CROP, tr(language, Text::Crop))?;
+            self.item(
+                edit,
+                cmd::CONVERT_IMAGE,
+                if language == Language::Spanish {
+                    "Convertir formato..."
+                } else {
+                    "Convert image format..."
+                },
+            )?;
             self.popup(self.root, edit, tr(language, Text::Edit))?;
 
             let image = CreatePopupMenu()?;
@@ -134,6 +148,21 @@ impl ThemedMenu {
             self.item(view, cmd::PREVIOUS_FRAME, tr(language, Text::PreviousPage))?;
             self.item(view, cmd::NEXT_FRAME, tr(language, Text::NextPage))?;
             self.item(view, cmd::RELOAD, tr(language, Text::Reload))?;
+            self.item(
+                view,
+                cmd::ALWAYS_ON_TOP,
+                if language == Language::Spanish {
+                    if always_on_top {
+                        "✓ Siempre encima"
+                    } else {
+                        "Siempre encima"
+                    }
+                } else if always_on_top {
+                    "✓ Always on top"
+                } else {
+                    "Always on top"
+                },
+            )?;
             self.popup(self.root, view, tr(language, Text::View))?;
 
             let options = CreatePopupMenu()?;

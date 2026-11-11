@@ -18,19 +18,25 @@ use windows::{
                 ES_MULTILINE, ES_READONLY, ES_WANTRETURN, GWLP_USERDATA, GetClientRect,
                 GetMessageW, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW,
                 GetWindowTextW, HMENU, IDC_ARROW, IsDialogMessageW, IsWindow, LoadCursorW, MSG,
-                RegisterClassExW, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW,
-                SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-                WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORBTN,
-                WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC, WM_ERASEBKGND, WM_NCCREATE, WM_SETFONT,
-                WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_POPUP, WS_SYSMENU, WS_TABSTOP,
-                WS_VISIBLE, WS_VSCROLL,
+                PostQuitMessage, RegisterClassExW, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER,
+                SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+                TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE,
+                WM_CTLCOLORBTN, WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC, WM_ERASEBKGND, WM_NCCREATE,
+                WM_SETFONT, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_POPUP, WS_SYSMENU,
+                WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
             },
         },
     },
     core::{PCWSTR, w},
 };
 
-use crate::platform::{text::wide, theme::apply_window_theme};
+use crate::{
+    i18n::Language,
+    platform::{text::wide, theme::apply_window_theme},
+};
+
+mod controls;
+use controls::create_controls;
 
 const CLASS_NAME: PCWSTR = w!("KGenView.PropertiesWindow");
 const ID_SAVE: usize = 1;
@@ -45,7 +51,6 @@ pub struct PropertiesData {
     pub original_size: String,
     pub current_size: String,
     pub print_size: String,
-    pub original_colors: String,
     pub current_colors: String,
     pub unique_colors: String,
     pub disk_size: String,
@@ -68,6 +73,7 @@ pub struct PropertiesEdit {
 struct DialogState {
     data: PropertiesData,
     dark: bool,
+    language: Language,
     result: Option<PropertiesEdit>,
     name_edit: HWND,
     author_edit: HWND,
@@ -78,7 +84,12 @@ struct DialogState {
     readonly_brush: HBRUSH,
 }
 
-pub fn show(owner: HWND, dark: bool, data: PropertiesData) -> Option<PropertiesEdit> {
+pub fn show(
+    owner: HWND,
+    dark: bool,
+    language: Language,
+    data: PropertiesData,
+) -> Option<PropertiesEdit> {
     let instance = HINSTANCE(unsafe { GetModuleHandleW(None) }.ok()?.0);
     let cursor = unsafe { LoadCursorW(None, IDC_ARROW) }.ok()?;
     let class = WNDCLASSEXW {
@@ -117,6 +128,7 @@ pub fn show(owner: HWND, dark: bool, data: PropertiesData) -> Option<PropertiesE
     let state = Box::new(DialogState {
         data,
         dark,
+        language,
         result: None,
         name_edit: HWND::default(),
         author_edit: HWND::default(),
@@ -130,7 +142,11 @@ pub fn show(owner: HWND, dark: bool, data: PropertiesData) -> Option<PropertiesE
     let scale = unsafe { GetDpiForWindow(owner) }.max(96) as f32 / 96.0;
     let width = (500.0 * scale).round() as i32;
     let height = (620.0 * scale).round() as i32;
-    let title = wide("KGen View — Propiedades de la imagen");
+    let title = wide(if language == Language::Spanish {
+        "KGen View — Propiedades de la imagen"
+    } else {
+        "KGen View — Image properties"
+    });
     let hwnd = match unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
@@ -168,9 +184,14 @@ pub fn show(owner: HWND, dark: bool, data: PropertiesData) -> Option<PropertiesE
         let _ = SetForegroundWindow(hwnd);
     }
     let mut message = MSG::default();
-    while unsafe { IsWindow(Some(hwnd)) }.as_bool()
-        && unsafe { GetMessageW(&mut message, None, 0, 0) }.as_bool()
-    {
+    while unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        let get_message = unsafe { GetMessageW(&mut message, Some(hwnd), 0, 0) };
+        if get_message.0 <= 0 {
+            if message.message == windows::Win32::UI::WindowsAndMessaging::WM_QUIT {
+                unsafe { PostQuitMessage(message.wParam.0 as i32) };
+            }
+            break;
+        }
         if !unsafe { IsDialogMessageW(hwnd, &message) }.as_bool() {
             unsafe {
                 let _ = TranslateMessage(&message);
@@ -345,236 +366,6 @@ unsafe extern "system" fn window_proc(
             LRESULT(1)
         }
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
-    }
-}
-
-unsafe fn create_controls(hwnd: HWND, state: &mut DialogState) {
-    let scale = unsafe { GetDpiForWindow(hwnd) }.max(96) as f32 / 96.0;
-    let theme_name = if state.dark {
-        w!("DarkMode_Explorer")
-    } else {
-        w!("Explorer")
-    };
-
-    let rows = [
-        ("Carpeta", state.data.folder.as_str(), true),
-        ("Ruta completa", state.data.full_path.as_str(), true),
-        ("Compresión", state.data.format.as_str(), false),
-        ("Resolución", state.data.resolution.as_str(), false),
-        ("Tamaño original", state.data.original_size.as_str(), false),
-        ("Tamaño actual", state.data.current_size.as_str(), false),
-        ("Tamaño impresión", state.data.print_size.as_str(), false),
-        (
-            "Colores originales",
-            state.data.original_colors.as_str(),
-            false,
-        ),
-        (
-            "Colores actuales",
-            state.data.current_colors.as_str(),
-            false,
-        ),
-        (
-            "Nº colores únicos",
-            state.data.unique_colors.as_str(),
-            false,
-        ),
-        ("Tamaño en disco", state.data.disk_size.as_str(), false),
-        ("Tamaño memoria", state.data.memory_size.as_str(), false),
-        (
-            "Índice carpeta/lista",
-            state.data.folder_index.as_str(),
-            false,
-        ),
-        ("Fecha/Hora archivo", state.data.file_time.as_str(), false),
-        ("Cargado en", state.data.load_time.as_str(), false),
-    ];
-
-    let mut y = 10;
-    create_static(hwnd, "Nombre de archivo", 10, y + 2, 125, 18, scale);
-    state.name_edit = create_edit(
-        hwnd,
-        &state.data.file_name,
-        140,
-        y,
-        345,
-        20,
-        false,
-        false,
-        scale,
-    );
-    let _ = unsafe { SetWindowTheme(state.name_edit, theme_name, None) };
-    y += 24;
-
-    for (label, value, long_value) in rows {
-        create_static(hwnd, label, 10, y + 2, 125, 18, scale);
-        let height = if long_value { 42 } else { 20 };
-        let edit = create_edit(hwnd, value, 140, y, 345, height, true, long_value, scale);
-        let _ = unsafe { SetWindowTheme(edit, theme_name, None) };
-        y += if long_value { 45 } else { 23 };
-    }
-
-    create_static(hwnd, "Autor", 10, y + 2, 125, 18, scale);
-    state.author_edit = create_edit(
-        hwnd,
-        &state.data.author,
-        140,
-        y,
-        345,
-        20,
-        false,
-        false,
-        scale,
-    );
-    let _ = unsafe { SetWindowTheme(state.author_edit, theme_name, None) };
-    y += 24;
-
-    create_static(hwnd, "Descripción", 10, y + 2, 125, 18, scale);
-    state.description_edit = create_edit(
-        hwnd,
-        &state.data.description,
-        140,
-        y,
-        345,
-        42,
-        false,
-        true,
-        scale,
-    );
-    let _ = unsafe { SetWindowTheme(state.description_edit, theme_name, None) };
-    y += 46;
-
-    create_static(hwnd, "Clave API ImgBB", 10, y + 2, 125, 18, scale);
-    state.api_key_edit = create_edit(
-        hwnd,
-        &state.data.api_key,
-        140,
-        y,
-        345,
-        20,
-        false,
-        false,
-        scale,
-    );
-    let _ = unsafe { SetWindowTheme(state.api_key_edit, theme_name, None) };
-    y += 30;
-
-    let cancel_btn = create_button(hwnd, "Cancelar", ID_CANCEL, 280, y, 95, 26, scale);
-    let save_btn = create_button(hwnd, "Guardar", ID_SAVE, 390, y, 95, 26, scale);
-    let _ = unsafe { SetWindowTheme(cancel_btn, theme_name, None) };
-    let _ = unsafe { SetWindowTheme(save_btn, theme_name, None) };
-}
-
-fn create_static(hwnd: HWND, text: &str, x: i32, y: i32, wdt: i32, hgt: i32, scale: f32) {
-    let text = wide(text);
-    let control = unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            w!("STATIC"),
-            PCWSTR(text.as_ptr()),
-            WS_CHILD | WS_VISIBLE,
-            scaled(x, scale),
-            scaled(y, scale),
-            scaled(wdt, scale),
-            scaled(hgt, scale),
-            Some(hwnd),
-            None,
-            None,
-            None,
-        )
-    };
-    if let Ok(control) = control {
-        set_font(control);
-    }
-}
-
-fn create_edit(
-    hwnd: HWND,
-    text: &str,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    read_only: bool,
-    multiline: bool,
-    scale: f32,
-) -> HWND {
-    let text = wide(text);
-    let mut style = WS_CHILD | WS_VISIBLE | WS_TABSTOP;
-    if multiline {
-        style |= WINDOW_STYLE(ES_MULTILINE as u32)
-            | WINDOW_STYLE(ES_AUTOVSCROLL as u32)
-            | WINDOW_STYLE(ES_WANTRETURN as u32)
-            | WS_VSCROLL;
-    } else {
-        style |= WINDOW_STYLE(ES_AUTOHSCROLL as u32);
-    }
-    if read_only {
-        style |= WINDOW_STYLE(ES_READONLY as u32);
-    } else {
-        style |= WS_BORDER;
-    }
-    let control = unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            w!("EDIT"),
-            PCWSTR(text.as_ptr()),
-            style,
-            scaled(x, scale),
-            scaled(y, scale),
-            scaled(width, scale),
-            scaled(height, scale),
-            Some(hwnd),
-            None,
-            None,
-            None,
-        )
-    }
-    .unwrap_or_default();
-    set_font(control);
-    control
-}
-
-fn create_button(
-    hwnd: HWND,
-    text: &str,
-    id: usize,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    scale: f32,
-) -> HWND {
-    let text = wide(text);
-    let control = unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            w!("BUTTON"),
-            PCWSTR(text.as_ptr()),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            scaled(x, scale),
-            scaled(y, scale),
-            scaled(width, scale),
-            scaled(height, scale),
-            Some(hwnd),
-            Some(HMENU(id as *mut c_void)),
-            None,
-            None,
-        )
-    }
-    .unwrap_or_default();
-    set_font(control);
-    control
-}
-
-fn set_font(hwnd: HWND) {
-    unsafe {
-        SendMessageW(
-            hwnd,
-            WM_SETFONT,
-            Some(WPARAM(GetStockObject(DEFAULT_GUI_FONT).0 as usize)),
-            Some(LPARAM(1)),
-        );
     }
 }
 

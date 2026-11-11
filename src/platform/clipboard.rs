@@ -42,50 +42,74 @@ pub fn copy_text(hwnd: HWND, value: &str) {
     }
 }
 
-pub fn copy_bgra_image(hwnd: HWND, width: u32, height: u32, pixels: &[u8]) {
-    let expected = width as usize * height as usize * 4;
-    if width == 0 || height == 0 || pixels.len() != expected {
-        return;
-    }
-    let header_size = 40usize;
-    let Ok(memory) = (unsafe { GlobalAlloc(GMEM_MOVEABLE, header_size + pixels.len()) }) else {
-        return;
-    };
-    let data = unsafe { GlobalLock(memory) };
-    if data.is_null() {
+/// Prepared off the UI thread; Windows takes ownership only after publication.
+pub struct PreparedImage {
+    memory: usize,
+    _reservation: Option<crate::resources::Reservation>,
+}
+impl PreparedImage {
+    pub fn new(width: u32, height: u32, pixels: &[u8]) -> Result<Self, String> {
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|v| v.checked_mul(4))
+            .ok_or("Dimensiones no válidas.")?;
+        if width == 0 || height == 0 || pixels.len() != expected {
+            return Err("Dimensiones no válidas.".into());
+        }
+        let reservation = crate::resources::cpu_budget()
+            .reserve(expected + 40)
+            .map_err(str::to_string)?;
+        let memory =
+            unsafe { GlobalAlloc(GMEM_MOVEABLE, expected + 40) }.map_err(|e| e.to_string())?;
+        let image = Self {
+            memory: memory.0 as usize,
+            _reservation: Some(reservation),
+        };
+        let data = unsafe { GlobalLock(memory) };
+        if data.is_null() {
+            return Err("No se pudo preparar el portapapeles.".into());
+        }
         unsafe {
-            let _ = GlobalFree(Some(memory));
+            let header = data.cast::<u8>();
+            ptr::write_bytes(header, 0, 40);
+            ptr::write_unaligned(header.cast::<u32>(), 40);
+            ptr::write_unaligned(header.add(4).cast::<i32>(), width as i32);
+            ptr::write_unaligned(header.add(8).cast::<i32>(), height as i32);
+            ptr::write_unaligned(header.add(12).cast::<u16>(), 1);
+            ptr::write_unaligned(header.add(14).cast::<u16>(), 32);
+            ptr::write_unaligned(header.add(20).cast::<u32>(), pixels.len() as u32);
+            let destination = std::slice::from_raw_parts_mut(header.add(40), pixels.len());
+            let row = width as usize * 4;
+            for y in 0..height as usize {
+                destination[(height as usize - 1 - y) * row..(height as usize - y) * row]
+                    .copy_from_slice(&pixels[y * row..(y + 1) * row]);
+            }
+            let _ = GlobalUnlock(memory);
         }
-        return;
+        Ok(image)
     }
-    unsafe {
-        let header = data.cast::<u8>();
-        ptr::write_unaligned(header.cast::<u32>(), 40);
-        ptr::write_unaligned(header.add(4).cast::<i32>(), width as i32);
-        ptr::write_unaligned(header.add(8).cast::<i32>(), height as i32);
-        ptr::write_unaligned(header.add(12).cast::<u16>(), 1);
-        ptr::write_unaligned(header.add(14).cast::<u16>(), 32);
-        ptr::write_unaligned(header.add(16).cast::<u32>(), 0);
-        ptr::write_unaligned(header.add(20).cast::<u32>(), pixels.len() as u32);
-        ptr::write_bytes(header.add(24), 0, 16);
-        let destination = std::slice::from_raw_parts_mut(header.add(header_size), pixels.len());
-        let row = width as usize * 4;
-        for y in 0..height as usize {
-            let src = y * row;
-            let dst = (height as usize - 1 - y) * row;
-            destination[dst..dst + row].copy_from_slice(&pixels[src..src + row]);
-        }
-        let _ = GlobalUnlock(memory);
-        if OpenClipboard(Some(hwnd)).is_err() {
-            let _ = GlobalFree(Some(memory));
-            return;
-        }
-        let _ = EmptyClipboard();
-        if SetClipboardData(CF_DIB.0 as u32, Some(HANDLE(memory.0))).is_err() {
+    pub fn publish(mut self, hwnd: HWND) -> Result<(), String> {
+        unsafe {
+            OpenClipboard(Some(hwnd)).map_err(|e| e.to_string())?;
+            let result = EmptyClipboard().and_then(|()| {
+                SetClipboardData(CF_DIB.0 as u32, Some(HANDLE(self.memory as *mut _)))
+            });
+            if result.is_ok() {
+                self.memory = 0;
+            }
             let _ = CloseClipboard();
-            let _ = GlobalFree(Some(memory));
-            return;
+            result.map(|_| ()).map_err(|e| e.to_string())
         }
-        let _ = CloseClipboard();
+    }
+}
+impl Drop for PreparedImage {
+    fn drop(&mut self) {
+        if self.memory != 0 {
+            unsafe {
+                let _ = GlobalFree(Some(windows::Win32::Foundation::HGLOBAL(
+                    self.memory as *mut _,
+                )));
+            }
+        }
     }
 }

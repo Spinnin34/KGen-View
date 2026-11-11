@@ -3,16 +3,7 @@ pub fn wide(value: &str) -> Vec<u16> {
 }
 
 pub fn wide_with_nuls(value: &str) -> Vec<u16> {
-    value
-        .chars()
-        .map(|character| {
-            if character == '\0' {
-                0
-            } else {
-                character as u16
-            }
-        })
-        .collect()
+    value.encode_utf16().collect()
 }
 
 pub fn nul_pos(buffer: &[u16]) -> usize {

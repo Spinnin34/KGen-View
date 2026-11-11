@@ -30,3 +30,5 @@ pub const LANGUAGE: usize = 150;
 pub const THEME: usize = 151;
 pub const ABOUT: usize = 160;
 pub const COPY_URL: usize = 161;
+pub const CONVERT_IMAGE: usize = 163;
+pub const ALWAYS_ON_TOP: usize = 164;

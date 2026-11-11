@@ -156,11 +156,15 @@ impl Chrome {
         self.menu.reset_render_resources();
     }
 
-    pub fn label_for_hover(&self) -> Option<&'static str> {
+    pub fn label_for_hover(&self, _language: crate::i18n::Language) -> Option<&'static str> {
         let command = self.toolbar.hovered?;
         toolbar_items()
             .iter()
             .find(|item| item.command == command)
             .map(|item| item.label)
+    }
+
+    pub fn accent_brush(&self) -> Option<&ID2D1SolidColorBrush> {
+        self.brushes.as_ref().map(|b| &b.accent)
     }
 }

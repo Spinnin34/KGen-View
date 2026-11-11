@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="https://private-user-images.githubusercontent.com/123275059/644712865-361ad751-23a9-4047-892d-4c63a3e0cdb2.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3OTA5NTQ1ODMsIm5iZiI6MTc5MDk1NDI4MywicGF0aCI6Ii8xMjMyNzUwNTkvNjQ0NzEyODY1LTM2MWFkNzUxLTIzYTktNDA0Ny04OTJkLTRjNjNhM2UwY2RiMi5wbmc_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1BS0lBVkNPRFlMU0E1M1BRSzRaQSUyRjIwMjYxMDAyJTJGdXMtZWFzdC0xJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI2MTAwMlQxNTE4MDNaJlgtQW16LUV4cGlyZXM9MzAwJlgtQW16LVNpZ25hdHVyZT1iZjcxNzY1OGU2ZjZjZTNkZGE3NjkzZTIzNjcxN2Y4ZTA1NjkzNTYyYjdmMjIzNWEwZTU0MTliOGE3YjIzNWUxJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCZyZXNwb25zZS1jb250ZW50LXR5cGU9aW1hZ2UlMkZwbmcifQ.djy2Ss6Xd3Gg7EniaVZsCofPAvqaOtpCPFyFCJ6FIsg" alt="KGen View mostrando una imagen en modo oscuro" width="720">
+  <img src="artifacts/KGenView-1.2-toolbar.png" alt="KGen View mostrando una imagen en modo oscuro" width="720">
 </p>
 
 KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está construido como una aplicación Win32 nativa en Rust, con decodificación mediante Windows Imaging Component (WIC) y renderizado acelerado con Direct2D. El resultado es una herramienta pequeña, directa y cómoda para abrir imágenes, recorrer carpetas y hacer ajustes rápidos sin convertir el visor en un editor pesado.
@@ -27,16 +27,21 @@ KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está constr
 - Cambio de idioma entre español e inglés.
 - Arrastrar y soltar, apertura desde el Explorador y apertura por línea de comandos.
 - Navegación circular por las imágenes de la carpeta, con orden natural para nombres como `imagen2.png` e `imagen10.png`.
+- Apertura de archivos ZIP y CBZ: indexado rápido y extracción bajo demanda mientras se navega por las imágenes.
+- Al abrir desde el Explorador una imagen dentro de un ZIP, carga el archivo completo y se sitúa en esa imagen.
 - Redimensionado automático de la ventana para aprovechar el espacio disponible.
 - Zoom con rueda, zoom libre, tamaño real, ajuste a ventana y ajuste al ancho.
 - Paneo y pantalla completa.
 - GIF animado y navegación por fotogramas o páginas en documentos multipágina compatibles.
 - Rotación de 90°, volteo horizontal y vertical, recorte de selección y deshacer/rehacer.
-- Guardar como PNG, JPEG, BMP o TIFF.
+- Conversión desde **Editar → Convertir formato** a los formatos que Windows tenga disponibles para exportar.
+- Panel de conversión flotante, con tema a juego y estado animado durante la exportación.
+- Varias instancias independientes para abrir imágenes en ventanas separadas, también desde el Explorador.
+- Opción **Ver → Siempre encima** para mantener la ventana activa sobre las demás aplicaciones.
+- Guardar como con los codificadores de imagen detectados en Windows Imaging Component (WIC).
 - Copiar la imagen o su ruta al portapapeles.
 - Envío a la Papelera de reciclaje con confirmación configurable.
 - Presentación con intervalo configurable.
-- Instancia única: al abrir otra imagen, la ventana existente recibe el archivo.
 - Salto automático de archivos dañados o incompatibles durante la navegación.
 - Sin telemetría, WebView ni procesos auxiliares.
 
@@ -59,12 +64,15 @@ KGen View abre directamente los siguientes formatos:
 | JPEG XL | `.jxl` |
 | SVG | `.svg` |
 | Otros codecs WIC | `.wdp`, `.jxr`, `.hdp`, `.dds`, si el codec está disponible en Windows |
+| Archivos de imágenes | `.zip`, `.cbz` (imágenes compatibles dentro del archivo) |
 
 WebP y HEIF/HEIC dependen de los codecs instalados en Windows. JPEG XL se decodifica dentro de KGen View, sin necesitar un codec adicional del sistema. La aplicación muestra un aviso cuando falta un codec necesario para WebP o HEIF/HEIC.
 
 ### Exportación
 
-La opción **Guardar como** permite exportar el fotograma visible a PNG, JPEG, BMP o TIFF. Al guardar una animación o un documento multipágina se exporta el fotograma que está actualmente en pantalla.
+En **Editar → Convertir formato**, elige uno de los formatos que Windows tiene disponibles mediante WIC en ese equipo. La lista puede incluir PNG, JPEG, BMP, TIFF, GIF, JPEG XR y otros formatos si hay un codificador instalado. La ventana permite guardar una copia sin cambiar el archivo abierto y muestra una animación mientras se convierte. En imágenes animadas o documentos multipágina se exporta el fotograma visible.
+
+La opción **Guardar como** también ofrece los codificadores disponibles y conserva su comportamiento habitual: la imagen abierta pasa a usar el archivo guardado.
 
 ## Atajos de teclado
 
@@ -92,7 +100,7 @@ La opción **Guardar como** permite exportar el fotograma visible a PNG, JPEG, B
 
 ## Instalación
 
-La forma recomendada para distribuir KGen View es el instalador `KGenView-Setup-x64.exe`. El instalador no necesita permisos de administrador: se instala en el perfil del usuario y puede registrar las asociaciones de archivos para BMP, JPEG, PNG, GIF, TIFF, ICO, WebP, HEIF/HEIC y SVG.
+La forma recomendada para distribuir KGen View es el instalador `KGenView-Setup-x64.exe`. El instalador no necesita permisos de administrador: se instala en el perfil del usuario y puede registrar las asociaciones de archivos para BMP, JPEG, PNG, GIF, TIFF, ICO, WebP, HEIF/HEIC, SVG, ZIP y CBZ.
 
 Si estás usando una compilación local, el script de release genera estos archivos en `dist\`:
 
@@ -154,26 +162,46 @@ HKEY_CURRENT_USER\Software\KGenView
 
 Si no necesitas compartir imágenes, puedes ignorar esta función y KGen View seguirá funcionando sin conexión.
 
-## Arquitectura
+## Control con IA mediante MCP
 
-El código está organizado por responsabilidades para mantener la aplicación pequeña y fácil de mantener:
+KGen View incluye un servidor [MCP](https://modelcontextprotocol.io/) local por **stdio**. Permite que un cliente MCP compatible controle una ventana dedicada de KGen View. No se inicia con el uso normal: el cliente debe lanzarlo expresamente con `--mcp`, por lo que no abre puertos ni añade tráfico de red.
 
-```text
-src/
-├── app.rs                         Fachada de la aplicación
-├── app/controller.rs              Estado de la ventana y flujo principal
-├── app/controller/loader.rs       Carga y precarga en segundo plano
-├── catalog.rs                     Catálogo y navegación de carpetas
-├── commands.rs                    Comandos compartidos por menús y atajos
-├── imaging.rs                     WIC, GIF, SVG, metadatos, edición e historial
-├── settings.rs                    Preferencias por usuario
-├── ui/                            Layout, tema, barra de herramientas e iconos
-└── platform/                      Adaptadores específicos de Win32
+Configura el cliente MCP para ejecutar el binario de KGen View con ese argumento. Por ejemplo, en clientes que usan `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "kgen-view": {
+      "command": "C:\\ruta\\a\\KGenView.exe",
+      "args": ["--mcp"]
+    }
+  }
+}
 ```
 
-El cargador usa una cola coalescente y control por generaciones: si el usuario recorre una carpeta rápidamente, se conserva la petición más reciente y se descartan resultados obsoletos. La precarga mantiene únicamente los recursos necesarios para que la navegación sea fluida sin dejar crecer la memoria indefinidamente.
+El cliente inicia una instancia de KGen View para esa sesión MCP. Las herramientas permiten consultar el estado, abrir una imagen por ruta absoluta, navegar por la carpeta o los fotogramas, ajustar la vista, alternar presentación o animación, aplicar rotaciones y volteos, y deshacer/rehacer. `convert_image` exporta una copia en un formato instalado en Windows; indica `output_path` y `format` (por ejemplo, `PNG`). La conversión se ejecuta en segundo plano, conserva abierta la imagen original y no sobrescribe un destino existente. No se exponen borrado, subida a ImgBB ni guardado automático de la imagen abierta. El cliente de IA puede recibir la ruta local y los metadatos de la imagen actual.
 
-Para evitar cargas accidentales desproporcionadas, el decodificador limita las dimensiones de una imagen a `100.000 × 100.000` píxeles, el presupuesto de memoria decodificada a 512 MiB y los documentos multipágina a 512 fotogramas.
+En el uso normal, sin `--mcp`, no se inicia el hilo MCP ni se enumeran formatos para esta función. La conversión solo se prepara tras una llamada MCP y usa el trabajador de operaciones de archivo ya existente; el hilo de interfaz sigue libre para dibujar y responder.
+
+Como con cualquier servidor MCP, concede acceso solo a clientes de confianza: estos pueden solicitar la apertura de archivos locales y realizar las acciones enumeradas mientras la sesión esté activa.
+
+## Arquitectura y rendimiento
+
+KGen View mantiene una interfaz Win32 y renderizado Direct2D. La ventana coordina servicios de carga, catálogo, vigilancia de carpetas y operaciones de archivo; sus implementaciones son módulos Rust con visibilidad explícita.
+
+- **Carga progresiva:** abre una vista ajustada y solicita detalle de la región visible al ampliar. JPEG aprovecha la reducción nativa de WIC cuando está disponible. Las dimensiones mostradas siguen siendo las originales.
+- **Páginas bajo demanda:** TIFF carga una página cada vez. GIF conserva el estado de composición y una caché limitada de fotogramas, sin expandir toda la animación en RAM.
+- **Edición geométrica:** rotación, volteo y recorte se almacenan como operaciones; deshacer/rehacer conserva instrucciones en lugar de copias completas. Guardar y convertir usan la resolución original.
+- **Trabajo en segundo plano:** carga, precarga, catálogo, guardado, preparación del portapapeles, renombrado, Papelera y limpieza de ZIP. Los resultados tienen propiedad explícita en buzones acotados.
+- **Renderizado:** texturas divididas en bloques y reutilizadas entre fotogramas compatibles; el repintado se produce por eventos. Minimizar pausa animación, presentación y precarga y libera cachés de presentación.
+- **Carpetas:** listas compartidas con búsqueda indexada y notificaciones de cambios; la comprobación periódica queda como alternativa cuando Windows no permite vigilar la carpeta.
+- **ZIP/CBZ:** lectores reutilizados por trabajador, extracción bajo demanda y referencias que mantienen los temporales vivos mientras los usan el visor o una exportación.
+
+El presupuesto por proceso permite reservar hasta **512 MiB de buffers CPU controlados** y **64 MiB de texturas de imagen**. La vista previa se limita a 32 MiB, la precarga a 16 MiB y la caché de fotogramas GIF a 32 MiB, subordinadas al presupuesto CPU común. Los códecs, Direct2D y sus controladores pueden realizar asignaciones internas adicionales: estos valores no son un límite absoluto de memoria del proceso.
+
+Se conservan los límites de dimensiones de 100.000 × 100.000 píxeles, 512 páginas/fotogramas y 64 MiB de entrada SVG. La exportación devuelve un error cuando no puede conservar la resolución original dentro de los límites; no reduce silenciosamente el archivo guardado. JPEG XL usa hasta dos hilos de decodificación.
+
+Consulta [docs/performance.md](docs/performance.md) para reproducir mediciones, revisar las decisiones de arquitectura y ejecutar las comprobaciones de calidad.
 
 ## Licencia
 

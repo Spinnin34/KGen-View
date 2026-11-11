@@ -25,6 +25,7 @@ pub struct Settings {
     pub language: Language,
     pub theme: ThemeMode,
     pub auto_resize: bool,
+    pub always_on_top: bool,
     pub slideshow_ms: u32,
     pub confirm_delete: bool,
     pub imgbb_api_key: String,
@@ -36,6 +37,7 @@ impl Default for Settings {
             language: Language::detect(),
             theme: ThemeMode::System,
             auto_resize: true,
+            always_on_top: false,
             slideshow_ms: 3000,
             confirm_delete: true,
             imgbb_api_key: String::new(),
@@ -58,6 +60,7 @@ impl Settings {
                 _ => ThemeMode::System,
             },
             auto_resize: read_dword("AutoResize").map(|v| v != 0).unwrap_or(true),
+            always_on_top: read_dword("AlwaysOnTop").map(|v| v != 0).unwrap_or(false),
             slideshow_ms: read_dword("SlideshowMs").unwrap_or(3000).clamp(500, 60_000),
             confirm_delete: read_dword("ConfirmDelete").map(|v| v != 0).unwrap_or(true),
             imgbb_api_key: read_string("ImgBbApiKey").unwrap_or_default(),
@@ -82,6 +85,7 @@ impl Settings {
             },
         );
         write_dword("AutoResize", self.auto_resize as u32);
+        write_dword("AlwaysOnTop", self.always_on_top as u32);
         write_dword("SlideshowMs", self.slideshow_ms);
         write_dword("ConfirmDelete", self.confirm_delete as u32);
         write_string("ImgBbApiKey", &self.imgbb_api_key);

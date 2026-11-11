@@ -1,8 +1,9 @@
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    time::SystemTime,
+    sync::Arc,
 };
 
 const EXTENSIONS: &[&str] = &[
@@ -12,59 +13,78 @@ const EXTENSIONS: &[&str] = &[
 
 #[derive(Default, Debug, Clone)]
 pub struct FolderCatalog {
-    pub files: Vec<PathBuf>,
+    pub files: Arc<Vec<PathBuf>>,
+    positions: Arc<HashMap<String, usize>>,
     pub index: Option<usize>,
 }
 
 impl FolderCatalog {
-    pub fn scan(current: &Path) -> Self {
+    pub fn scan_cancellable(current: &Path, should_cancel: &impl Fn() -> bool) -> Self {
         let Some(folder) = current.parent() else {
             return Self::default();
         };
-        let mut entries: Vec<(PathBuf, Option<SystemTime>, String)> = fs::read_dir(folder)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|entry| {
-                let path = entry.path();
-                if !is_supported(&path) {
-                    return None;
-                }
-                let metadata = entry.metadata().ok()?;
-                metadata.is_file().then(|| {
-                    let name = display_name(&path);
-                    (path, metadata.modified().ok(), name)
-                })
-            })
+        let Ok(read_dir) = fs::read_dir(folder) else {
+            return Self::default();
+        };
+        let mut entries: Vec<(PathBuf, String)> = Vec::new();
+        for entry in read_dir {
+            if should_cancel() {
+                return Self::default();
+            }
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            if !is_supported(&path) {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_file() {
+                let name = display_name(&path);
+                entries.push((path, name));
+            }
+        }
+        if should_cancel() {
+            return Self::default();
+        }
+        entries.sort_unstable_by(|a, b| natural_cmp(&a.1, &b.1));
+        if should_cancel() {
+            return Self::default();
+        }
+        let files: Vec<PathBuf> = entries.into_iter().map(|(path, _)| path).collect();
+        Self::from_files(files, Some(current))
+    }
+
+    pub fn from_files(files: Vec<PathBuf>, current: Option<&Path>) -> Self {
+        let positions: HashMap<_, _> = files
+            .iter()
+            .enumerate()
+            .map(|(index, path)| (path_key(path), index))
             .collect();
-        entries.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| natural_cmp(&a.2, &b.2)));
-        let files: Vec<PathBuf> = entries.into_iter().map(|(path, _, _)| path).collect();
-        let current_name = current.file_name();
-        let index = files.iter().position(|path| {
-            path == current || (current_name.is_some() && path.file_name() == current_name)
-        });
-        Self { files, index }
+        let index = current.and_then(|path| positions.get(&path_key(path)).copied());
+        Self {
+            files: Arc::new(files),
+            positions: Arc::new(positions),
+            index,
+        }
+    }
+
+    pub fn contains(&self, path: &Path) -> bool {
+        self.positions.contains_key(&path_key(path))
+    }
+
+    pub fn remove(&mut self, path: &Path) {
+        let files = self
+            .files
+            .iter()
+            .filter(|item| !same_path(item, path))
+            .cloned()
+            .collect();
+        *self = Self::from_files(files, None);
     }
 
     pub fn update_index(&mut self, current: &Path) {
-        if self.files.is_empty() {
-            return;
-        }
-        let current_name = current.file_name();
-        if let Some(pos) = self.files.iter().position(|path| {
-            path == current || (current_name.is_some() && path.file_name() == current_name)
-        }) {
-            self.index = Some(pos);
-        }
-    }
-
-    pub fn adjacent(&self, offset: isize) -> Option<PathBuf> {
-        let index = self.index? as isize + offset;
-        if index < 0 || index >= self.files.len() as isize {
-            None
-        } else {
-            Some(self.files[index as usize].clone())
-        }
+        self.index = self.positions.get(&path_key(current)).copied();
     }
 
     pub fn adjacent_wrapped(&self, offset: isize) -> Option<PathBuf> {
@@ -102,6 +122,17 @@ fn display_name(path: &Path) -> String {
         .into_owned()
 }
 
+fn same_path(left: &Path, right: &Path) -> bool {
+    left == right
+        || left
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+}
+
+fn path_key(path: &Path) -> String {
+    path.to_string_lossy().to_ascii_lowercase()
+}
+
 pub fn natural_cmp(a: &str, b: &str) -> Ordering {
     let mut ai = 0;
     let mut bi = 0;
@@ -128,10 +159,11 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
         } else {
             let ac = a[ai..].chars().next().unwrap();
             let bc = b[bi..].chars().next().unwrap();
-            let ord = ac
-                .to_lowercase()
-                .to_string()
-                .cmp(&bc.to_lowercase().to_string());
+            let ord = if ac.is_ascii() && bc.is_ascii() {
+                ac.to_ascii_lowercase().cmp(&bc.to_ascii_lowercase())
+            } else {
+                ac.to_lowercase().cmp(bc.to_lowercase())
+            };
             if ord != Ordering::Equal {
                 return ord;
             }
@@ -158,18 +190,38 @@ mod tests {
 
     #[test]
     fn adjacent_wrapped_cycles_both_directions() {
-        let catalog = FolderCatalog {
-            files: ["a.png", "b.png", "c.png"]
+        let catalog = FolderCatalog::from_files(
+            ["a.png", "b.png", "c.png"]
                 .into_iter()
                 .map(PathBuf::from)
                 .collect(),
-            index: Some(2),
-        };
+            Some(Path::new("c.png")),
+        );
         assert_eq!(catalog.adjacent_wrapped(1), Some(PathBuf::from("a.png")));
         let first = FolderCatalog {
             index: Some(0),
             ..catalog
         };
         assert_eq!(first.adjacent_wrapped(-1), Some(PathBuf::from("c.png")));
+    }
+
+    #[test]
+    fn large_catalog_cursors_and_removals_are_independent() {
+        let paths = (0..100_000)
+            .map(|i| PathBuf::from(format!("C:/photos/image{i:06}.png")))
+            .collect();
+        let mut first =
+            FolderCatalog::from_files(paths, Some(Path::new("C:/photos/image099999.png")));
+        let mut second = first.clone();
+        second.update_index(Path::new("C:/PHOTOS/IMAGE050000.PNG"));
+        assert_eq!(first.index, Some(99999));
+        assert_eq!(second.index, Some(50000));
+        first.remove(Path::new("C:/photos/image050000.png"));
+        assert!(!first.contains(Path::new("C:/photos/image050000.png")));
+        assert!(second.contains(Path::new("C:/photos/image050000.png")));
+        assert_eq!(
+            second.adjacent_wrapped(1),
+            Some(PathBuf::from("C:/photos/image050001.png"))
+        );
     }
 }
