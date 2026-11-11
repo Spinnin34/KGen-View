@@ -149,6 +149,13 @@ impl FolderWatcher {
         })
     }
     pub fn start(&mut self, hwnd: HWND) {
+        if let Some(worker) = self.worker.take() {
+            if !worker.is_finished() {
+                self.worker = Some(worker);
+                return;
+            }
+            let _ = worker.join();
+        }
         let (stop, changed, hwnd) = (self.stop, self.changed, hwnd.0 as usize);
         let (pending, results) = (self.pending.clone(), self.results.clone());
         self.worker = Some(
@@ -221,6 +228,9 @@ impl FolderWatcher {
                                 publish(path.clone(), watch.is_some());
                             }
                         } else {
+                            if let Some(path) = &folder {
+                                publish(path.clone(), false);
+                            }
                             break;
                         }
                     }

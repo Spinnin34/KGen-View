@@ -23,6 +23,7 @@ const MAX_ARCHIVE_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PREFETCH_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const COPY_BUFFER_BYTES: usize = 128 * 1024;
 static TEMP_DIRECTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
+type ArchiveStamp = (u64, Option<SystemTime>);
 
 struct ArchiveMember {
     path: PathBuf,
@@ -40,13 +41,13 @@ pub(super) struct ArchiveMemberRef {
     size: u64,
     extraction_lock: Arc<Mutex<()>>,
     storage: Arc<ArchiveStorage>,
-    source_stamp: (u64, Option<SystemTime>),
+    source_stamp: ArchiveStamp,
 }
 
 pub(super) struct ArchiveSession {
     source_path: PathBuf,
     storage: Arc<ArchiveStorage>,
-    source_stamp: (u64, Option<SystemTime>),
+    source_stamp: ArchiveStamp,
     members: Vec<ArchiveMember>,
     positions: HashMap<PathBuf, usize>,
 }
@@ -86,6 +87,7 @@ impl ArchiveSession {
             return Err(ImageError("Carga cancelada.".into()));
         }
         let file = File::open(source_path).map_err(ImageError::from)?;
+        let source_stamp = file_stamp(&file.metadata().map_err(ImageError::from)?);
         let mut archive = zip::ZipArchive::new(file)
             .map_err(|error| archive_error(language, &error.to_string()))?;
         if archive.len() > MAX_ARCHIVE_ENTRIES {
@@ -126,6 +128,9 @@ impl ArchiveSession {
         entries.sort_by(|left, right| {
             natural_cmp(&left.name, &right.name).then_with(|| left.index.cmp(&right.index))
         });
+        if archive_stamp(source_path).map_err(ImageError::from)? != source_stamp {
+            return Err(archive_changed_error(language));
+        }
         if entries.len() > MAX_ARCHIVE_IMAGES {
             return Err(localized_error(
                 language,
@@ -161,11 +166,10 @@ impl ArchiveSession {
             .enumerate()
             .map(|(i, m)| (m.path.clone(), i))
             .collect();
-        let metadata = fs::metadata(source_path)?;
         Ok(Self {
             source_path: source_path.to_path_buf(),
             storage,
-            source_stamp: (metadata.len(), metadata.modified().ok()),
+            source_stamp,
             members,
             positions,
         })
@@ -260,25 +264,16 @@ impl ArchiveMemberRef {
         if should_cancel() {
             return Err(ImageError("Carga cancelada.".into()));
         }
-        let metadata = fs::metadata(&self.source_path)?;
-        if (metadata.len(), metadata.modified().ok()) != self.source_stamp {
-            return Err(localized_error(
-                language,
-                "El ZIP cambió. Vuelve a abrirlo.",
-                "The ZIP archive changed. Open it again.",
-            ));
+        if archive_stamp(&self.source_path)? != self.source_stamp {
+            return Err(archive_changed_error(language));
+        }
+        if self.size > MAX_ARCHIVE_MEMBER_BYTES {
+            return Err(archive_member_too_large_error(language));
         }
         if let Ok(metadata) = fs::metadata(&self.path)
             && metadata.len() == self.size
         {
             return Ok(());
-        }
-        if self.size > MAX_ARCHIVE_MEMBER_BYTES {
-            return Err(localized_error(
-                language,
-                "Esta imagen del ZIP supera el límite de extracción de 512 MiB.",
-                "This image in the ZIP exceeds the 512 MiB extraction limit.",
-            ));
         }
         let _ = fs::remove_file(&self.path);
         let partial_path = self.path.with_extension("partial");
@@ -304,6 +299,9 @@ impl ArchiveMemberRef {
                 cache.path != self.source_path || cache.stamp != self.source_stamp
             }) {
                 let file = File::open(&self.source_path)?;
+                if file_stamp(&file.metadata()?) != self.source_stamp {
+                    return Err(archive_changed_error(language));
+                }
                 let archive = zip::ZipArchive::new(file)
                     .map_err(|e| archive_error(language, &e.to_string()))?;
                 *slot = Some(ZipReader {
@@ -366,7 +364,7 @@ impl ArchiveMemberRef {
 
 struct ZipReader {
     path: PathBuf,
-    stamp: (u64, Option<SystemTime>),
+    stamp: ArchiveStamp,
     archive: zip::ZipArchive<File>,
 }
 thread_local! { static ZIP_READER:RefCell<Option<ZipReader>>=const { RefCell::new(None) }; }
@@ -469,6 +467,30 @@ fn create_temp_directory() -> std::io::Result<PathBuf> {
     ))
 }
 
+fn file_stamp(metadata: &fs::Metadata) -> ArchiveStamp {
+    (metadata.len(), metadata.modified().ok())
+}
+
+fn archive_stamp(path: &Path) -> std::io::Result<ArchiveStamp> {
+    fs::metadata(path).map(|metadata| file_stamp(&metadata))
+}
+
+fn archive_changed_error(language: Language) -> ImageError {
+    localized_error(
+        language,
+        "El ZIP cambi\u{00f3}. Vuelve a abrirlo.",
+        "The ZIP archive changed. Open it again.",
+    )
+}
+
+fn archive_member_too_large_error(language: Language) -> ImageError {
+    localized_error(
+        language,
+        "Esta imagen del ZIP supera el l\u{00ed}mite de extracci\u{00f3}n de 512 MiB.",
+        "This image in the ZIP exceeds the 512 MiB extraction limit.",
+    )
+}
+
 fn no_images_error(language: Language) -> ImageError {
     localized_error(
         language,
@@ -523,6 +545,13 @@ mod tests {
         let extracted = member.path().to_path_buf();
         let directory = extracted.parent().unwrap().to_path_buf();
         assert_eq!(fs::read(&extracted).unwrap(), data);
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"changed")
+            .unwrap();
+        assert!(member.extract(&|| false, Language::Spanish).is_err());
         drop(member);
         drop(archive);
         assert!(extracted.exists());
