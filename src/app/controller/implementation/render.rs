@@ -1,29 +1,25 @@
+use super::*;
+
 impl AppState {
-    unsafe fn create_controls(&mut self) {
+    pub(super) unsafe fn create_controls(&mut self) {
+        self.file_service.start(self.hwnd);
+        self.folder_watcher.start(self.hwnd);
         unsafe {
             self.rebuild_menu();
         }
         unsafe { DragAcceptFiles(self.hwnd, true) };
-        unsafe {
-            let _ = SetTimer(
-                Some(self.hwnd),
-                TIMER_FOLDER_REFRESH,
-                FOLDER_REFRESH_INTERVAL_MS,
-                None,
-            );
-        }
         unsafe {
             self.apply_theme();
         }
         self.update_status(None);
     }
 
-    unsafe fn apply_theme(&self) {
+    pub(super) unsafe fn apply_theme(&self) {
         unsafe { apply_window_theme(self.hwnd, self.settings.is_dark()) };
         let _ = unsafe { InvalidateRect(Some(self.hwnd), None, false) };
     }
 
-    fn chrome_layout(&self) -> ChromeLayout {
+    pub(super) fn chrome_layout(&self) -> ChromeLayout {
         let mut rect = RECT::default();
         unsafe {
             let _ = GetClientRect(self.hwnd, &mut rect);
@@ -31,11 +27,11 @@ impl AppState {
         ChromeLayout::calculate(self.hwnd, rect, self.fullscreen)
     }
 
-    fn keeps_window_size(&self) -> bool {
+    pub(super) fn keeps_window_size(&self) -> bool {
         self.fullscreen || unsafe { IsZoomed(self.hwnd).as_bool() }
     }
 
-    unsafe fn ensure_target(&mut self) -> Result<(), WinError> {
+    pub(super) unsafe fn ensure_target(&mut self) -> Result<(), WinError> {
         if self.target.is_none() {
             let mut client = RECT::default();
             unsafe { GetClientRect(self.hwnd, &mut client)? };
@@ -56,21 +52,24 @@ impl AppState {
                 ..Default::default()
             };
             self.target = Some(unsafe {
-                self.d2d_factory.CreateHwndRenderTarget(
-                    &render_properties,
-                    &hwnd_properties,
-                )?
+                self.d2d_factory
+                    .CreateHwndRenderTarget(&render_properties, &hwnd_properties)?
             });
         }
         Ok(())
     }
 
-    unsafe fn ensure_bitmap(&mut self) -> Result<(), WinError> {
-        if self.bitmap.is_some() || self.document.is_none() {
+    pub(super) unsafe fn ensure_bitmap(&mut self) -> Result<(), WinError> {
+        if self.document.is_none() {
+            self.bitmaps.clear();
             return Ok(());
         }
-        unsafe { self.ensure_target()? };
+        unsafe {
+            self.ensure_target()?;
+        }
         let frame = self.document.as_ref().unwrap().current_frame();
+        let target = self.target.as_ref().unwrap();
+        let tile_size = unsafe { target.GetMaximumBitmapSize() }.clamp(1, 2048);
         let properties = D2D1_BITMAP_PROPERTIES {
             pixelFormat: D2D1_PIXEL_FORMAT {
                 format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -79,21 +78,59 @@ impl AppState {
             dpiX: 96.0,
             dpiY: 96.0,
         };
-        self.bitmap = Some(unsafe {
-            self.target.as_ref().unwrap().CreateBitmap(
-                D2D_SIZE_U {
-                    width: frame.width,
-                    height: frame.height,
-                },
-                Some(frame.pixels.as_ptr().cast()),
-                frame.width * 4,
-                &properties,
-            )?
-        });
+        let reuse = !self.bitmaps.is_empty() && self.bitmap_size == (frame.width, frame.height);
+        if reuse && !self.bitmap_dirty {
+            return Ok(());
+        }
+        let _span = crate::diagnostics::Span::new("gpu_upload");
+        if !reuse {
+            self.bitmaps.clear();
+            for top in (0..frame.height).step_by(tile_size as usize) {
+                for left in (0..frame.width).step_by(tile_size as usize) {
+                    let width = tile_size.min(frame.width - left);
+                    let height = tile_size.min(frame.height - top);
+                    let memory = crate::resources::gpu_budget()
+                        .reserve(width as usize * height as usize * 4)
+                        .map_err(|message| {
+                            WinError::new(windows::core::HRESULT(0x8007000Eu32 as i32), message)
+                        })?;
+                    let offset = (top as usize * frame.width as usize + left as usize) * 4;
+                    let bitmap = unsafe {
+                        target.CreateBitmap(
+                            D2D_SIZE_U { width, height },
+                            Some(frame.pixels[offset..].as_ptr().cast()),
+                            frame.width * 4,
+                            &properties,
+                        )?
+                    };
+                    self.bitmaps.push(BitmapTile {
+                        bitmap,
+                        left,
+                        top,
+                        width,
+                        height,
+                        _memory: memory,
+                    });
+                }
+            }
+        } else {
+            for tile in &self.bitmaps {
+                let offset = (tile.top as usize * frame.width as usize + tile.left as usize) * 4;
+                unsafe {
+                    tile.bitmap.CopyFromMemory(
+                        None,
+                        frame.pixels[offset..].as_ptr().cast(),
+                        frame.width * 4,
+                    )?;
+                }
+            }
+        }
+        self.bitmap_size = (frame.width, frame.height);
+        self.bitmap_dirty = false;
         Ok(())
     }
 
-    fn image_area(&self) -> RECT {
+    pub(super) fn image_area(&self) -> RECT {
         let image = self.chrome_layout().image;
         RECT {
             left: image.left.round() as i32,
@@ -103,13 +140,13 @@ impl AppState {
         }
     }
 
-    fn calculate_view(&mut self) -> Option<D2D_RECT_F> {
-        let frame = self.document.as_ref()?.current_frame();
+    pub(super) fn calculate_view(&mut self) -> Option<D2D_RECT_F> {
+        let (width, height) = self.document.as_ref()?.view_dimensions();
         let area = self.image_area();
         let aw = (area.right - area.left).max(1) as f32;
         let ah = (area.bottom - area.top).max(1) as f32;
-        let iw = frame.width as f32;
-        let ih = frame.height as f32;
+        let iw = width as f32;
+        let ih = height as f32;
         self.zoom = match self.zoom_mode {
             ZoomMode::Fit => (aw / iw).min(ah / ih),
             ZoomMode::FitWidth => (aw / iw).max(0.001),
@@ -129,7 +166,7 @@ impl AppState {
         })
     }
 
-    unsafe fn paint(&mut self, hdc: windows::Win32::Graphics::Gdi::HDC) {
+    pub(super) unsafe fn paint(&mut self, hdc: windows::Win32::Graphics::Gdi::HDC) {
         if unsafe { self.ensure_target() }.is_err() {
             return;
         }
@@ -143,16 +180,32 @@ impl AppState {
             target.Clear(Some(&palette.canvas));
         }
         let destination = self.calculate_view();
-        if let (Some(bitmap), Some(destination)) = (self.bitmap.as_ref(), destination) {
-            unsafe {
-                target.DrawBitmap(
-                    bitmap,
-                    Some(&destination),
-                    1.0,
-                    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-                    None,
-                )
-            };
+        if let (Some(document), Some(destination)) = (self.document.as_ref(), destination) {
+            let frame = document.current_frame();
+            let (l, t, r, b) = document.rendered_region;
+            let sx = (r - l) as f32 / frame.width as f32 * self.zoom;
+            let sy = (b - t) as f32 / frame.height as f32 * self.zoom;
+            for tile in &self.bitmaps {
+                let region = D2D_RECT_F {
+                    left: destination.left + l as f32 * self.zoom + tile.left as f32 * sx,
+                    top: destination.top + t as f32 * self.zoom + tile.top as f32 * sy,
+                    right: destination.left
+                        + l as f32 * self.zoom
+                        + (tile.left + tile.width) as f32 * sx,
+                    bottom: destination.top
+                        + t as f32 * self.zoom
+                        + (tile.top + tile.height) as f32 * sy,
+                };
+                unsafe {
+                    target.DrawBitmap(
+                        &tile.bitmap,
+                        Some(&region),
+                        1.0,
+                        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                        None,
+                    );
+                }
+            }
         }
         let layout = self.chrome_layout();
         let mut status = self.status_model.clone();
@@ -188,13 +241,15 @@ impl AppState {
         }
         if unsafe { target.EndDraw(None, None) }.is_err() {
             self.target = None;
-            self.bitmap = None;
+            self.bitmaps.clear();
             self.chrome.reset_render_resources();
         } else {
+            if let Some(started) = self.first_visible.take() {
+                crate::diagnostics::elapsed("first_visible", started.elapsed());
+            }
             unsafe {
                 crate::ui::status::draw(hdc, &layout, &status, self.settings.is_dark());
             }
         }
     }
 }
-

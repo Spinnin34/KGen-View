@@ -1,5 +1,7 @@
+use super::*;
+
 impl AppState {
-    fn new(settings: Settings) -> Result<Self, WinError> {
+    pub(super) fn new(settings: Settings) -> Result<Self, WinError> {
         let d2d_factory =
             unsafe { D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)? };
         let alive = Arc::new(AtomicBool::new(true));
@@ -20,10 +22,24 @@ impl AppState {
             navigation_direction: 1,
             alive: alive.clone(),
             loader: DecodeService::new(alive.clone()),
+            file_service: FileService::new(),
+            file_busy: false,
+            pending_action: None,
+            pending_properties: None,
             catalog_loader: CatalogService::new(alive),
+            folder_watcher: FolderWatcher::new()?,
+            folder_dirty: false,
             d2d_factory,
             target: None,
-            bitmap: None,
+            bitmaps: Vec::new(),
+            bitmap_size: (0, 0),
+            first_visible: None,
+            bitmap_dirty: true,
+            view_request: 0,
+            view_pending: false,
+            requested_page: 0,
+            view_key: None,
+            upload_result: Arc::new(Mailbox::default()),
             chrome: Chrome::new(),
             status_model: StatusModel::default(),
             menu: None,
@@ -44,10 +60,15 @@ impl AppState {
             load_started: None,
             load_time_ms: 0,
             uploading: false,
+            archive_sessions: Vec::new(),
+            active_archive: None,
+            archive_fallback: None,
+            mcp_requests: None,
+            pending_mcp_reply: None,
         })
     }
 
-    fn lang(&self) -> Language {
+    pub(super) fn lang(&self) -> Language {
         self.settings.language
     }
 }

@@ -84,6 +84,15 @@ Root: HKCU; Subkey: "Software\Classes\KGenView.jxl\shell\open\command"; ValueTyp
 Root: HKCU; Subkey: "Software\Classes\KGenView.svg"; ValueType: string; ValueName: ""; ValueData: "Imagen Vectorial SVG de KGen View"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\KGenView.svg\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icons\svg.ico"
 Root: HKCU; Subkey: "Software\Classes\KGenView.svg\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\KGenView.Archive"; ValueType: string; ValueName: ""; ValueData: "Archivo ZIP de imágenes"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\KGenView.Archive\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKCU; Subkey: "Software\Classes\KGenView.Archive\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+
+Root: HKCU; Subkey: "Software\Classes\Applications\KGenView.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "KGen View"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\KGenView.exe\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKCU; Subkey: "Software\Classes\Applications\KGenView.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\Applications\KGenView.exe\SupportedTypes"; ValueType: string; ValueName: ".zip"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\KGenView.exe\SupportedTypes"; ValueType: string; ValueName: ".cbz"; ValueData: ""; Flags: uninsdeletevalue
 
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".bmp"; ValueData: "KGenView.bmp"
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".dib"; ValueData: "KGenView.bmp"
@@ -100,6 +109,8 @@ Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".heif"; ValueData: "KGenView.heic"
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".jxl"; ValueData: "KGenView.jxl"
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".svg"; ValueData: "KGenView.svg"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".zip"; ValueData: "KGenView.Archive"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".cbz"; ValueData: "KGenView.Archive"
 
 Root: HKCU; Subkey: "Software\Classes\.bmp\OpenWithProgids"; ValueType: none; ValueName: "KGenView.bmp"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.dib\OpenWithProgids"; ValueType: none; ValueName: "KGenView.bmp"; Flags: uninsdeletevalue
@@ -116,6 +127,8 @@ Root: HKCU; Subkey: "Software\Classes\.heic\OpenWithProgids"; ValueType: none; V
 Root: HKCU; Subkey: "Software\Classes\.heif\OpenWithProgids"; ValueType: none; ValueName: "KGenView.heic"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.jxl\OpenWithProgids"; ValueType: none; ValueName: "KGenView.jxl"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.svg\OpenWithProgids"; ValueType: none; ValueName: "KGenView.svg"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.zip\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Archive"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.cbz\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Archive"; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,KGen View}"; Flags: nowait postinstall skipifsilent

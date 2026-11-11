@@ -1,5 +1,7 @@
+use super::*;
+
 impl AppState {
-    unsafe fn rebuild_menu(&mut self) {
+    pub(super) unsafe fn rebuild_menu(&mut self) {
         if let Ok(menu) = ThemedMenu::new(
             self.hwnd,
             self.lang(),
@@ -11,7 +13,7 @@ impl AppState {
         }
     }
 
-    fn show_menu(&self, index: usize, layout: &ChromeLayout) {
+    pub(super) fn show_menu(&self, index: usize, layout: &ChromeLayout) {
         let Some(item) = layout.menu_items.iter().find(|item| item.index == index) else {
             return;
         };
@@ -31,7 +33,7 @@ impl AppState {
         }
     }
 
-    fn handle_command(&mut self, id: usize) {
+    pub(super) fn handle_command(&mut self, id: usize) {
         match id {
             cmd::OPEN => self.open_dialog(),
             cmd::SAVE_AS => {
@@ -91,26 +93,16 @@ impl AppState {
             cmd::RELOAD => {
                 if let Some(doc) = &self.document {
                     let path = doc.path.clone();
-                    if self.can_leave() {
-                        self.start_load(path);
-                    }
+                    self.cache.clear();
+                    self.cache_bytes = 0;
+                    self.request_leave(PendingAction::Load(path));
                 }
             }
             cmd::INFO => self.info(),
             cmd::OPEN_FOLDER => self.open_folder(),
             cmd::COPY_PATH => self.copy_path(),
-            cmd::PREVIOUS_FRAME => {
-                if let Some(doc) = &mut self.document {
-                    doc.previous_frame();
-                    self.invalidate_image();
-                }
-            }
-            cmd::NEXT_FRAME => {
-                if let Some(doc) = &mut self.document {
-                    doc.next_frame();
-                    self.invalidate_image();
-                }
-            }
+            cmd::PREVIOUS_FRAME => self.change_frame(-1),
+            cmd::NEXT_FRAME => self.change_frame(1),
             cmd::LANGUAGE => {
                 self.settings.language = self.settings.language.toggle();
                 self.settings.save();
@@ -145,4 +137,3 @@ impl AppState {
         }
     }
 }
-

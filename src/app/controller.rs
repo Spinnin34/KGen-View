@@ -14,6 +14,7 @@ use std::{
 };
 
 use windows::{
+    Win32::System::Variant::{VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_I4},
     Win32::{
         Foundation::{FILETIME, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM},
         Graphics::{
@@ -34,7 +35,10 @@ use windows::{
             },
         },
         System::{
-            Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
+            Com::{
+                CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+                CoUninitialize,
+            },
             LibraryLoader::GetModuleHandleW,
             Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
         },
@@ -49,38 +53,40 @@ use windows::{
                 VK_OEM_PLUS, VK_PRIOR, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_SUBTRACT,
             },
             Shell::{
-                DragAcceptFiles, DragFinish, DragQueryFileW, FO_DELETE, FOF_ALLOWUNDO,
-                FOF_NOERRORUI, SHFILEOPSTRUCTW, SHFileOperationW, ShellExecuteW,
+                DragAcceptFiles, DragFinish, DragQueryFileW, Folder2, IShellFolderViewDual,
+                IShellWindows, IWebBrowser2, ShellExecuteW, ShellWindows,
             },
             WindowsAndMessaging::{
                 AdjustWindowRectEx, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_STYLE,
-                GWLP_USERDATA, GetClientRect, GetMessageW, GetWindowLongPtrW, GetWindowRect,
-                HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, IDI_APPLICATION, IsIconic, IsWindow,
-                IsZoomed, KillTimer, LoadCursorW, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION,
-                MB_ICONQUESTION, MB_OK, MB_YESNO, MB_YESNOCANCEL, MSG, MessageBoxW, PostMessageW,
-                PostQuitMessage, RegisterClassExW, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL,
-                SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-                SWP_SHOWWINDOW, SendMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
-                SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
-                WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DPICHANGED,
-                WM_DRAWITEM, WM_DROPFILES, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP,
-                WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MEASUREITEM, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-                WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE, WM_SIZE, WM_TIMER,
-                WNDCLASSEXW, WS_CLIPCHILDREN, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
+                GWLP_USERDATA, GetClientRect, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
+                GetWindowRect, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, IDI_APPLICATION, IsIconic,
+                IsWindow, IsZoomed, KillTimer, LoadCursorW, LoadIconW, MB_ICONERROR,
+                MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK, MB_YESNO, MB_YESNOCANCEL, MSG,
+                MessageBoxW, PostMessageW, PostQuitMessage, RegisterClassExW, SW_RESTORE, SW_SHOW,
+                SW_SHOWNORMAL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW, SetForegroundWindow, SetTimer,
+                SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage,
+                WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY,
+                WM_DPICHANGED, WM_DRAWITEM, WM_DROPFILES, WM_ERASEBKGND, WM_KEYDOWN,
+                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MEASUREITEM,
+                WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE,
+                WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_CLIPCHILDREN, WS_OVERLAPPEDWINDOW, WS_POPUP,
+                WS_VISIBLE,
             },
         },
     },
-    core::{Error as WinError, PCWSTR, PWSTR, w},
+    core::{Error as WinError, Interface, PCWSTR, PWSTR, w},
 };
 
 use crate::{
     catalog::FolderCatalog,
     commands as cmd,
     i18n::{Language, Text, tr},
-    imaging::{ImageDocument, ImageError, wide_path},
+    imaging::{DecodeRequest, ImageDocument, ImageError},
+    mailbox::Mailbox,
     platform::{
-        clipboard::{copy_bgra_image, copy_text},
+        clipboard::copy_text,
         imgbb,
         menu::ThemedMenu,
         properties_dialog::{PropertiesData, PropertiesEdit},
@@ -91,14 +97,25 @@ use crate::{
     ui::{Chrome, layout::ChromeLayout, status::StatusModel, theme::Palette},
 };
 
+mod archive;
+mod file_service;
+mod folder_watch;
 mod loader;
-use loader::{CatalogService, DecodeService};
+use archive::ArchiveSession;
+use file_service::{FileResult, FileService, FileTask};
+use folder_watch::FolderWatcher;
+use loader::{CatalogService, DecodeService, DecodeTarget};
 
 const CLASS_NAME: PCWSTR = w!("KGenView.MainWindow");
 const WM_LOAD_DONE: u32 = WM_APP + 1;
 const WM_PREFETCH_DONE: u32 = WM_APP + 2;
 const WM_UPLOAD_DONE: u32 = WM_APP + 3;
 const WM_CATALOG_DONE: u32 = WM_APP + 4;
+const WM_VIEW_DONE: u32 = WM_APP + 5;
+const WM_FILE_DONE: u32 = WM_APP + 6;
+const WM_FOLDER_CHANGED: u32 = WM_APP + 7;
+const WM_MCP_REQUEST: u32 = WM_APP + 8;
+const TIMER_VIEW: usize = 5;
 const WM_CONVERSION_CLOSED: u32 = crate::platform::conversion_dialog::WM_CONVERSION_CLOSED;
 const TIMER_ANIMATION: usize = 1;
 const TIMER_SLIDESHOW: usize = 2;
@@ -119,6 +136,7 @@ struct LoadPayload {
     path: PathBuf,
     result: Result<ImageDocument, ImageError>,
     catalog: FolderCatalog,
+    archive: Option<ArchiveSession>,
 }
 
 struct PrefetchPayload {
@@ -133,8 +151,30 @@ struct CatalogPayload {
     catalog: FolderCatalog,
 }
 
+struct ViewPayload {
+    generation: u64,
+    request_id: u64,
+    result: Result<ImageDocument, ImageError>,
+}
+
+type ViewKey = (u64, u64, usize, (u32, u32, u32, u32), (u32, u32));
+
 struct UploadPayload {
     result: Result<String, String>,
+}
+
+struct BitmapTile {
+    bitmap: ID2D1Bitmap,
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+    _memory: crate::resources::Reservation,
+}
+
+enum PendingAction {
+    Load(PathBuf),
+    Close,
 }
 
 struct AppState {
@@ -154,10 +194,24 @@ struct AppState {
     navigation_direction: isize,
     alive: Arc<AtomicBool>,
     loader: DecodeService,
+    file_service: FileService,
+    file_busy: bool,
+    pending_action: Option<PendingAction>,
+    pending_properties: Option<PropertiesEdit>,
     catalog_loader: CatalogService,
+    folder_watcher: FolderWatcher,
+    folder_dirty: bool,
     d2d_factory: ID2D1Factory,
     target: Option<ID2D1HwndRenderTarget>,
-    bitmap: Option<ID2D1Bitmap>,
+    bitmaps: Vec<BitmapTile>,
+    bitmap_size: (u32, u32),
+    first_visible: Option<Instant>,
+    bitmap_dirty: bool,
+    view_request: u64,
+    view_pending: bool,
+    requested_page: usize,
+    view_key: Option<ViewKey>,
+    upload_result: Arc<Mailbox<UploadPayload>>,
     chrome: Chrome,
     status_model: StatusModel,
     menu: Option<ThemedMenu>,
@@ -178,6 +232,14 @@ struct AppState {
     load_started: Option<Instant>,
     load_time_ms: u128,
     uploading: bool,
+    archive_sessions: Vec<ArchiveSession>,
+    active_archive: Option<usize>,
+    archive_fallback: Option<(FolderCatalog, Option<usize>, Option<SystemTime>)>,
+    mcp_requests: Option<std::sync::mpsc::Receiver<crate::mcp::Request>>,
+    pending_mcp_reply: Option<(
+        serde_json::Value,
+        std::sync::mpsc::Sender<serde_json::Value>,
+    )>,
 }
 
 mod implementation;

@@ -1,5 +1,7 @@
+use super::*;
+
 impl AppState {
-    fn ensure_export_formats(&mut self) -> bool {
+    pub(super) fn ensure_export_formats(&mut self) -> bool {
         if self.export_formats.is_none() {
             let formats = ImageDocument::available_export_formats().unwrap_or_default();
             self.selected_export_format = formats
@@ -13,15 +15,13 @@ impl AppState {
             .is_some_and(|formats| !formats.is_empty())
     }
 
-    fn open_dialog(&mut self) {
+    pub(super) fn open_dialog(&mut self) {
         let mut buffer = vec![0u16; 32768];
-        let filter = wide_with_nuls(
-            if self.lang() == Language::Spanish {
-                "Imágenes compatibles\0*.bmp;*.dib;*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.tif;*.tiff;*.ico;*.webp;*.heic;*.heif;*.jxl;*.jxr;*.wdp;*.hdp;*.dds;*.svg\0Todos los archivos\0*.*\0\0"
-            } else {
-                "Supported images\0*.bmp;*.dib;*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.tif;*.tiff;*.ico;*.webp;*.heic;*.heif;*.jxl;*.jxr;*.wdp;*.hdp;*.dds;*.svg\0All files\0*.*\0\0"
-            },
-        );
+        let filter = wide_with_nuls(if self.lang() == Language::Spanish {
+            "Imágenes y archivos ZIP\0*.bmp;*.dib;*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.tif;*.tiff;*.ico;*.webp;*.heic;*.heif;*.jxl;*.jxr;*.wdp;*.hdp;*.dds;*.svg;*.zip;*.cbz\0Todos los archivos\0*.*\0\0"
+        } else {
+            "Images and ZIP archives\0*.bmp;*.dib;*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.tif;*.tiff;*.ico;*.webp;*.heic;*.heif;*.jxl;*.jxr;*.wdp;*.hdp;*.dds;*.svg;*.zip;*.cbz\0All files\0*.*\0\0"
+        });
         let mut dialog = OPENFILENAMEW {
             lStructSize: size_of::<OPENFILENAMEW>() as u32,
             hwndOwner: self.hwnd,
@@ -33,14 +33,12 @@ impl AppState {
         };
         if unsafe { GetOpenFileNameW(&mut dialog) }.as_bool() {
             let path = PathBuf::from(String::from_utf16_lossy(&buffer[..nul_pos(&buffer)]));
-            if self.can_leave() {
-                self.start_load(path);
-            }
+            self.request_leave(PendingAction::Load(path));
         }
     }
 
-    fn save_as_dialog(&mut self) -> bool {
-        if self.document.is_none() {
+    pub(super) fn save_as_dialog(&mut self) -> bool {
+        if self.document.is_none() || self.file_busy {
             return false;
         }
         if !self.ensure_export_formats() {
@@ -65,18 +63,23 @@ impl AppState {
             .position(|format| format.accepts_extension(&extension))
             .unwrap_or(self.selected_export_format.min(export_formats.len() - 1));
         let format = export_formats[default_format].clone();
+        let source_name = self
+            .active_archive_member(&document.path)
+            .map(|(_, member)| member.rsplit('/').next().unwrap_or(member).to_owned())
+            .unwrap_or_else(|| {
+                document
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            });
         let suggested = if format.accepts_extension(&extension) {
-            document
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
+            source_name.clone()
         } else {
             format!(
                 "{}.{}",
-                document
-                    .path
+                Path::new(&source_name)
                     .file_stem()
                     .unwrap_or_default()
                     .to_string_lossy(),
@@ -135,30 +138,23 @@ impl AppState {
         if !format.accepts_extension(path_extension) {
             path.set_extension(format.extension());
         }
-        let result = self
-            .document
-            .as_mut()
-            .unwrap()
-            .save_as_format(&path, &format);
-        match result {
-            Ok(()) => {
-                self.active_path = Some(path.clone());
-                self.catalog = FolderCatalog::default();
-                self.catalog_stamp = None;
-                self.catalog_loader
-                    .submit(self.generation, path, self.hwnd);
-                self.update_title();
-                self.update_status(None);
-                true
-            }
-            Err(error) => {
-                self.show_error(&error.to_string());
-                false
-            }
+        let document = self.document.as_ref().unwrap().export_snapshot();
+        self.file_busy = self.file_service.submit(FileTask::Save {
+            document,
+            path,
+            format,
+        });
+        if self.file_busy {
+            self.update_status(Some(if self.lang() == Language::Spanish {
+                "Guardando…"
+            } else {
+                "Saving…"
+            }));
         }
+        self.file_busy
     }
 
-    fn convert_dialog(&mut self) {
+    pub(super) fn convert_dialog(&mut self) {
         if unsafe { IsWindow(Some(self.conversion_window)) }.as_bool() {
             unsafe {
                 let _ = ShowWindow(self.conversion_window, SW_RESTORE);
@@ -198,7 +194,7 @@ impl AppState {
         }
     }
 
-    fn show_error(&self, text: &str) {
+    pub(super) fn show_error(&self, text: &str) {
         let text = wide(text);
         let caption = wide(tr(self.lang(), Text::Error));
         unsafe {
@@ -211,12 +207,16 @@ impl AppState {
         }
     }
 
-    fn info(&mut self) {
+    pub(super) fn info(&mut self) {
+        if self.file_busy {
+            return;
+        }
         let Some(doc) = &self.document else { return };
         let spanish = self.lang() == Language::Spanish;
         let frame = doc.current_frame();
-        let pixels = u64::from(frame.width) * u64::from(frame.height);
-        let unique_colors = if pixels <= 500_000 {
+        let (width, height) = doc.view_dimensions();
+        let pixels = u64::from(width) * u64::from(height);
+        let unique_colors = if !doc.is_preview && pixels <= 500_000 {
             let count = frame
                 .pixels
                 .as_chunks::<4>()
@@ -233,31 +233,53 @@ impl AppState {
         };
         let author = metadata_value(doc, "Autor");
         let description = metadata_value(doc, "Descripción");
-        let folder = doc.path.parent().map(display_path).unwrap_or_default();
-        let file_name = doc
-            .path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
+        let archive_source = self
+            .active_archive_member(&doc.path)
+            .map(|(archive, _)| archive.source_path().to_path_buf());
+        let archive_member = self
+            .active_archive_member(&doc.path)
+            .map(|(_, member)| member.to_owned());
+        let folder = archive_source
+            .as_deref()
+            .and_then(Path::parent)
+            .or_else(|| doc.path.parent())
+            .map(display_path)
+            .unwrap_or_default();
+        let file_name = archive_member
+            .as_deref()
+            .map(|member| member.rsplit('/').next().unwrap_or(member).to_owned())
+            .unwrap_or_else(|| {
+                doc.path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            });
         let position = self
             .catalog
             .index
             .map(|index| format!("{} / {}", index + 1, self.catalog.files.len()))
             .unwrap_or_else(|| "—".into());
-        let ratio = frame.width as f64 / frame.height.max(1) as f64;
+        let ratio = width as f64 / height.max(1) as f64;
         let (dpi_x, dpi_y) = doc.resolution_dpi;
-        let dpi_x = if dpi_x.is_finite() && dpi_x > 0.0 { dpi_x } else { 96.0 };
-        let dpi_y = if dpi_y.is_finite() && dpi_y > 0.0 { dpi_y } else { 96.0 };
+        let dpi_x = if dpi_x.is_finite() && dpi_x > 0.0 {
+            dpi_x
+        } else {
+            96.0
+        };
+        let dpi_y = if dpi_y.is_finite() && dpi_y > 0.0 {
+            dpi_y
+        } else {
+            96.0
+        };
         let (original_width, original_height) = doc.original_size;
-        let memory_bytes = doc
-            .frames
-            .iter()
-            .fold(0u64, |total, frame| total.saturating_add(frame.pixels.len() as u64));
+        let memory_bytes = doc.frames.iter().fold(0u64, |total, frame| {
+            total.saturating_add(frame.pixels.len() as u64)
+        });
         let data = PropertiesData {
             file_name,
             folder,
-            full_path: display_path(&doc.path),
+            full_path: self.display_file_location(&doc.path),
             format: doc.format_name.clone(),
             resolution: format!("{dpi_x:.2} × {dpi_y:.2} DPI"),
             original_size: if spanish {
@@ -266,27 +288,25 @@ impl AppState {
                 format!("{original_width} × {original_height} pixels")
             },
             current_size: if spanish {
-                format!("{} × {} píxeles ({ratio:.2})", frame.width, frame.height)
+                format!("{} × {} píxeles ({ratio:.2})", width, height)
             } else {
-                format!("{} × {} pixels ({ratio:.2})", frame.width, frame.height)
+                format!("{} × {} pixels ({ratio:.2})", width, height)
             },
             print_size: if spanish {
                 format!(
-                    "{:.2} × {:.2} cm · {:.2} × {:.2} pulgadas"
-                    ,
-                    frame.width as f64 / dpi_x * 2.54,
-                    frame.height as f64 / dpi_y * 2.54,
-                    frame.width as f64 / dpi_x,
-                    frame.height as f64 / dpi_y,
+                    "{:.2} × {:.2} cm · {:.2} × {:.2} pulgadas",
+                    width as f64 / dpi_x * 2.54,
+                    height as f64 / dpi_y * 2.54,
+                    width as f64 / dpi_x,
+                    height as f64 / dpi_y,
                 )
             } else {
                 format!(
-                    "{:.2} × {:.2} cm · {:.2} × {:.2} inches"
-                    ,
-                    frame.width as f64 / dpi_x * 2.54,
-                    frame.height as f64 / dpi_y * 2.54,
-                    frame.width as f64 / dpi_x,
-                    frame.height as f64 / dpi_y,
+                    "{:.2} × {:.2} cm · {:.2} × {:.2} inches",
+                    width as f64 / dpi_x * 2.54,
+                    height as f64 / dpi_y * 2.54,
+                    width as f64 / dpi_x,
+                    height as f64 / dpi_y,
                 )
             },
             current_colors: "32 bits BGRA".into(),
@@ -294,7 +314,7 @@ impl AppState {
             disk_size: format!("{} ({} bytes)", format_bytes(doc.file_size), doc.file_size),
             memory_size: format_bytes(memory_bytes),
             folder_index: position,
-            file_time: file_timestamp(&doc.path),
+            file_time: file_timestamp(archive_source.as_deref().unwrap_or(&doc.path)),
             load_time: if spanish {
                 format!("{} milisegundos", self.load_time_ms)
             } else {
@@ -309,22 +329,37 @@ impl AppState {
             self.settings.is_dark(),
             self.lang(),
             data,
-        )
-        else {
+        ) else {
             return;
         };
         self.apply_properties(edit);
     }
 
-    fn apply_properties(&mut self, edit: PropertiesEdit) {
+    pub(super) fn apply_properties(&mut self, edit: PropertiesEdit) {
         let spanish = self.lang() == Language::Spanish;
         let Some(old_path) = self.document.as_ref().map(|document| document.path.clone()) else {
             return;
         };
-        let old_name = old_path.file_name().unwrap_or_default().to_string_lossy();
+        let old_name = self
+            .active_archive_member(&old_path)
+            .map(|(_, member)| member.rsplit('/').next().unwrap_or(member).to_owned())
+            .unwrap_or_else(|| {
+                old_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            });
         let new_name = edit.file_name.trim();
-        let mut renamed_path = None;
-        if !new_name.is_empty() && new_name != old_name {
+        if !new_name.is_empty() && new_name != old_name.as_str() {
+            if self.active_archive_member(&old_path).is_some() {
+                self.show_error(if spanish {
+                    "No se puede renombrar una imagen dentro de un ZIP. Usa Guardar como para crear una copia."
+                } else {
+                    "An image inside a ZIP archive cannot be renamed. Use Save As to create a copy."
+                });
+                return;
+            }
             if new_name.contains(['/', '\\', ':', '<', '>', '"', '|', '?', '*'])
                 || new_name.chars().any(char::is_control)
                 || new_name.ends_with(['.', ' '])
@@ -337,7 +372,9 @@ impl AppState {
                 return;
             }
             let old_extension = old_path.extension().map(|value| value.to_string_lossy());
-            let new_extension = Path::new(new_name).extension().map(|value| value.to_string_lossy());
+            let new_extension = Path::new(new_name)
+                .extension()
+                .map(|value| value.to_string_lossy());
             let same_extension = match (old_extension, new_extension) {
                 (Some(old), Some(new)) => old.eq_ignore_ascii_case(&new),
                 (None, None) => true,
@@ -352,38 +389,29 @@ impl AppState {
                 return;
             }
             let target = old_path.with_file_name(new_name);
-            if target.exists() && !paths_equal(&target, &old_path) {
-                self.show_error(if spanish {
-                    "Ya existe un archivo con ese nombre."
+            let id = self.document.as_ref().unwrap().id;
+            self.file_busy = self.file_service.submit(FileTask::Rename {
+                id,
+                from: old_path,
+                to: target,
+            });
+            if self.file_busy {
+                self.pending_properties = Some(edit);
+                self.update_status(Some(if spanish {
+                    "Renombrando…"
                 } else {
-                    "A file with that name already exists."
-                });
-                return;
+                    "Renaming…"
+                }));
             }
-            if let Err(error) = fs::rename(&old_path, &target) {
-                self.show_error(&if spanish {
-                    format!("No se pudo renombrar el archivo: {error}")
-                } else {
-                    format!("Could not rename the file: {error}")
-                });
-                return;
-            }
-            renamed_path = Some(target);
+            return;
         }
+        self.finish_properties(edit);
+    }
 
+    pub(super) fn finish_properties(&mut self, edit: PropertiesEdit) {
         if self.settings.imgbb_api_key != edit.api_key.trim() {
             self.settings.imgbb_api_key = edit.api_key.trim().into();
             self.settings.save();
-        }
-        if let Some(target) = renamed_path {
-            if let Some(document) = &mut self.document {
-                document.path = target.clone();
-            }
-            self.active_path = Some(target.clone());
-            self.catalog = FolderCatalog::default();
-            self.catalog_stamp = None;
-            self.catalog_loader
-                .submit(self.generation, target, self.hwnd);
         }
         let Some(document) = &mut self.document else {
             return;
@@ -393,6 +421,7 @@ impl AppState {
         if changed {
             document.dirty = true;
             document.metadata_dirty = true;
+            document.revision = document.revision.wrapping_add(1);
         }
         self.update_title();
         self.update_status(None);

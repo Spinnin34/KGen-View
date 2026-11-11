@@ -1,7 +1,9 @@
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 const EXTENSIONS: &[&str] = &[
@@ -11,7 +13,8 @@ const EXTENSIONS: &[&str] = &[
 
 #[derive(Default, Debug, Clone)]
 pub struct FolderCatalog {
-    pub files: Vec<PathBuf>,
+    pub files: Arc<Vec<PathBuf>>,
+    positions: Arc<HashMap<String, usize>>,
     pub index: Option<usize>,
 }
 
@@ -49,21 +52,39 @@ impl FolderCatalog {
             return Self::default();
         }
         let files: Vec<PathBuf> = entries.into_iter().map(|(path, _)| path).collect();
-        let index = find_path(&files, current);
-        Self { files, index }
+        Self::from_files(files, Some(current))
+    }
+
+    pub fn from_files(files: Vec<PathBuf>, current: Option<&Path>) -> Self {
+        let positions: HashMap<_, _> = files
+            .iter()
+            .enumerate()
+            .map(|(index, path)| (path_key(path), index))
+            .collect();
+        let index = current.and_then(|path| positions.get(&path_key(path)).copied());
+        Self {
+            files: Arc::new(files),
+            positions: Arc::new(positions),
+            index,
+        }
+    }
+
+    pub fn contains(&self, path: &Path) -> bool {
+        self.positions.contains_key(&path_key(path))
+    }
+
+    pub fn remove(&mut self, path: &Path) {
+        let files = self
+            .files
+            .iter()
+            .filter(|item| !same_path(item, path))
+            .cloned()
+            .collect();
+        *self = Self::from_files(files, None);
     }
 
     pub fn update_index(&mut self, current: &Path) {
-        self.index = find_path(&self.files, current);
-    }
-
-    pub fn adjacent(&self, offset: isize) -> Option<PathBuf> {
-        let index = self.index? as isize + offset;
-        if index < 0 || index >= self.files.len() as isize {
-            None
-        } else {
-            Some(self.files[index as usize].clone())
-        }
+        self.index = self.positions.get(&path_key(current)).copied();
     }
 
     pub fn adjacent_wrapped(&self, offset: isize) -> Option<PathBuf> {
@@ -108,11 +129,8 @@ fn same_path(left: &Path, right: &Path) -> bool {
             .eq_ignore_ascii_case(&right.to_string_lossy())
 }
 
-fn find_path(files: &[PathBuf], current: &Path) -> Option<usize> {
-    files
-        .iter()
-        .position(|path| path == current)
-        .or_else(|| files.iter().position(|path| same_path(path, current)))
+fn path_key(path: &Path) -> String {
+    path.to_string_lossy().to_ascii_lowercase()
 }
 
 pub fn natural_cmp(a: &str, b: &str) -> Ordering {
@@ -172,18 +190,38 @@ mod tests {
 
     #[test]
     fn adjacent_wrapped_cycles_both_directions() {
-        let catalog = FolderCatalog {
-            files: ["a.png", "b.png", "c.png"]
+        let catalog = FolderCatalog::from_files(
+            ["a.png", "b.png", "c.png"]
                 .into_iter()
                 .map(PathBuf::from)
                 .collect(),
-            index: Some(2),
-        };
+            Some(Path::new("c.png")),
+        );
         assert_eq!(catalog.adjacent_wrapped(1), Some(PathBuf::from("a.png")));
         let first = FolderCatalog {
             index: Some(0),
             ..catalog
         };
         assert_eq!(first.adjacent_wrapped(-1), Some(PathBuf::from("c.png")));
+    }
+
+    #[test]
+    fn large_catalog_cursors_and_removals_are_independent() {
+        let paths = (0..100_000)
+            .map(|i| PathBuf::from(format!("C:/photos/image{i:06}.png")))
+            .collect();
+        let mut first =
+            FolderCatalog::from_files(paths, Some(Path::new("C:/photos/image099999.png")));
+        let mut second = first.clone();
+        second.update_index(Path::new("C:/PHOTOS/IMAGE050000.PNG"));
+        assert_eq!(first.index, Some(99999));
+        assert_eq!(second.index, Some(50000));
+        first.remove(Path::new("C:/photos/image050000.png"));
+        assert!(!first.contains(Path::new("C:/photos/image050000.png")));
+        assert!(second.contains(Path::new("C:/photos/image050000.png")));
+        assert_eq!(
+            second.adjacent_wrapped(1),
+            Some(PathBuf::from("C:/photos/image050001.png"))
+        );
     }
 }

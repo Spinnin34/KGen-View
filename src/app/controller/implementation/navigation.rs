@@ -1,5 +1,21 @@
+use super::*;
+
 impl AppState {
-    fn accept_catalog(&mut self, payload: CatalogPayload) {
+    pub(super) fn active_archive_member<'a>(
+        &'a self,
+        path: &Path,
+    ) -> Option<(&'a ArchiveSession, &'a str)> {
+        let archive = self.archive_sessions.get(self.active_archive?)?;
+        Some((archive, archive.member_name(path)?))
+    }
+
+    pub(super) fn display_file_location(&self, path: &Path) -> String {
+        self.active_archive_member(path)
+            .map(|(archive, member)| format!("{}::{member}", display_path(archive.source_path())))
+            .unwrap_or_else(|| display_path(path))
+    }
+
+    pub(super) fn accept_catalog(&mut self, payload: CatalogPayload) {
         if payload.generation != self.generation {
             return;
         }
@@ -30,7 +46,7 @@ impl AppState {
         }
     }
 
-    fn schedule_auto_resize(&self) {
+    pub(super) fn schedule_auto_resize(&self) {
         if self.keeps_window_size() {
             return;
         }
@@ -45,14 +61,14 @@ impl AppState {
         }
     }
 
-    unsafe fn auto_resize_window(&mut self) {
+    pub(super) unsafe fn auto_resize_window(&mut self) {
         if self.keeps_window_size() {
             return;
         }
         let Some(document) = &self.document else {
             return;
         };
-        let frame = document.current_frame();
+        let (image_width, image_height) = document.view_dimensions();
         let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST) };
         let mut info = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
@@ -83,11 +99,11 @@ impl AppState {
         let chrome_h = chrome.toolbar_height() + chrome.status_height();
         let max_image_w = (max_w - frame_w).max(1) as f32;
         let max_image_h = (max_h - frame_h - chrome_h).max(1) as f32;
-        let scale = (max_image_w / frame.width.max(1) as f32)
-            .min(max_image_h / frame.height.max(1) as f32)
+        let scale = (max_image_w / image_width.max(1) as f32)
+            .min(max_image_h / image_height.max(1) as f32)
             .min(1.0);
-        let desired_client_w = (frame.width as f32 * scale).round() as i32;
-        let desired_client_h = (frame.height as f32 * scale).round() as i32 + chrome_h;
+        let desired_client_w = (image_width as f32 * scale).round() as i32;
+        let desired_client_h = (image_height as f32 * scale).round() as i32 + chrome_h;
         let mut outer = RECT {
             left: 0,
             top: 0,
@@ -134,53 +150,67 @@ impl AppState {
         };
     }
 
-    fn update_title(&self) {
-        let title = self
-            .document
-            .as_ref()
-            .and_then(|doc| doc.path.file_name())
-            .map(|name| format!("{} — KGen View", name.to_string_lossy()))
-            .unwrap_or_else(|| "KGen View".into());
+    pub(super) fn update_title(&self) {
+        let title = self.document.as_ref().map_or_else(
+            || "KGen View".into(),
+            |document| {
+                if let Some((archive, member)) = self.active_archive_member(&document.path) {
+                    let archive_name = archive
+                        .source_path()
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy();
+                    format!("{archive_name} — {member} — KGen View")
+                } else {
+                    document
+                        .path
+                        .file_name()
+                        .map(|name| format!("{} — KGen View", name.to_string_lossy()))
+                        .unwrap_or_else(|| "KGen View".into())
+                }
+            },
+        );
         let wide = wide(&title);
         unsafe {
             let _ = SetWindowTextW(self.hwnd, PCWSTR(wide.as_ptr()));
         }
     }
 
-    fn navigate(&mut self, offset: isize) {
-        let Some(path) = self.catalog.adjacent_wrapped(offset) else {
-            return;
-        };
-        if self.can_leave() {
-            // Advance the logical position immediately. A fast wheel gesture
-            // can then skip over images still being decoded and the worker
-            // only has to finish the newest destination.
+    pub(super) fn navigate(&mut self, offset: isize) {
+        if let Some(path) = self.catalog.adjacent_wrapped(offset) {
             self.prefetch_enabled = true;
             self.navigation_direction = offset.signum();
-            self.catalog.update_index(&path);
-            self.start_load(path);
+            self.request_leave(PendingAction::Load(path));
         }
     }
-
-    fn navigate_edge(&mut self, first: bool) {
+    pub(super) fn navigate_edge(&mut self, first: bool) {
         let path = if first {
             self.catalog.first()
         } else {
             self.catalog.last()
         };
-        if let Some(path) = path
-            && self.can_leave()
-        {
+        if let Some(path) = path {
             self.prefetch_enabled = true;
             self.navigation_direction = if first { 1 } else { -1 };
-            self.catalog.update_index(&path);
-            self.start_load(path);
+            self.request_leave(PendingAction::Load(path));
         }
     }
-
-    fn can_leave(&mut self) -> bool {
+    pub(super) fn perform_action(&mut self, action: PendingAction) {
+        match action {
+            PendingAction::Load(path) => self.start_load(path),
+            PendingAction::Close => unsafe {
+                let _ = DestroyWindow(self.hwnd);
+            },
+        }
+    }
+    pub(super) fn request_leave(&mut self, action: PendingAction) {
+        if self.file_busy {
+            self.pending_action = Some(action);
+            return;
+        }
         if !self.document.as_ref().is_some_and(|doc| doc.dirty) {
-            return true;
+            self.perform_action(action);
+            return;
         }
         let caption = wide(tr(self.lang(), Text::AppTitle));
         let text = wide(tr(self.lang(), Text::SaveChanges));
@@ -193,9 +223,13 @@ impl AppState {
             )
         };
         match answer.0 {
-            6 => self.save_as_dialog(),
-            7 => true,
-            _ => false,
+            6 => {
+                if self.save_as_dialog() {
+                    self.pending_action = Some(action);
+                }
+            }
+            7 => self.perform_action(action),
+            _ => {}
         }
     }
 }

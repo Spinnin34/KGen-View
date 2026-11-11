@@ -1,15 +1,21 @@
+use super::*;
+
 impl AppState {
-    fn edit<F: FnOnce(&mut ImageDocument)>(&mut self, operation: F) {
+    pub(super) fn edit<F: FnOnce(&mut ImageDocument)>(&mut self, operation: F) {
+        if self.file_busy || self.load_started.is_some() {
+            return;
+        }
         if let Some(document) = &mut self.document {
             operation(document);
-            let frame = document.current_frame();
-            self.center = (frame.width as f32 / 2.0, frame.height as f32 / 2.0);
+            let (width, height) = document.view_dimensions();
+            self.center = (width as f32 / 2.0, height as f32 / 2.0);
             self.zoom_mode = ZoomMode::Fit;
-            self.invalidate_image();
+            self.request_view();
+            self.update_status(None);
         }
     }
 
-    fn crop(&mut self) {
+    pub(super) fn crop(&mut self) {
         let Some((l, t, r, b)) = self.crop_selection.take() else {
             return;
         };
@@ -18,19 +24,20 @@ impl AppState {
         });
     }
 
-    fn set_zoom(&mut self, mode: ZoomMode) {
+    pub(super) fn set_zoom(&mut self, mode: ZoomMode) {
         self.zoom_mode = mode;
         unsafe {
             let _ = InvalidateRect(Some(self.hwnd), None, false);
         }
+        self.schedule_view();
         self.update_status(None);
     }
 
-    fn change_zoom(&mut self, factor: f32) {
+    pub(super) fn change_zoom(&mut self, factor: f32) {
         self.change_zoom_at(factor, None);
     }
 
-    fn change_zoom_at(&mut self, factor: f32, anchor: Option<POINT>) {
+    pub(super) fn change_zoom_at(&mut self, factor: f32, anchor: Option<POINT>) {
         if self.document.is_none() {
             return;
         }
@@ -62,10 +69,11 @@ impl AppState {
         unsafe {
             let _ = InvalidateRect(Some(self.hwnd), None, false);
         }
+        self.schedule_view();
         self.update_status(None);
     }
 
-    fn finish_selection(&mut self) {
+    pub(super) fn finish_selection(&mut self) {
         let (Some(start), Some(end)) = (self.selection_start.take(), self.selection_end.take())
         else {
             return;
@@ -79,23 +87,23 @@ impl AppState {
         let Some(destination) = self.calculate_view() else {
             return;
         };
-        let frame = self.document.as_ref().unwrap().current_frame();
+        let (width, height) = self.document.as_ref().unwrap().view_dimensions();
         let l = (((start.x.min(end.x) as f32 - destination.left) / self.zoom)
             .floor()
             .max(0.0) as u32)
-            .min(frame.width);
+            .min(width);
         let t = (((start.y.min(end.y) as f32 - destination.top) / self.zoom)
             .floor()
             .max(0.0) as u32)
-            .min(frame.height);
+            .min(height);
         let r = (((start.x.max(end.x) as f32 - destination.left) / self.zoom)
             .ceil()
             .max(0.0) as u32)
-            .min(frame.width);
+            .min(width);
         let b = (((start.y.max(end.y) as f32 - destination.top) / self.zoom)
             .ceil()
             .max(0.0) as u32)
-            .min(frame.height);
+            .min(height);
         if r > l && b > t {
             let area = self.image_area();
             self.zoom = (((area.right - area.left) as f32 / (r - l) as f32)
@@ -108,11 +116,12 @@ impl AppState {
         unsafe {
             let _ = InvalidateRect(Some(self.hwnd), None, false);
         }
+        self.schedule_view();
         self.update_status(None);
     }
 
-    fn toggle_fullscreen(&mut self) {
-        self.bitmap = None;
+    pub(super) fn toggle_fullscreen(&mut self) {
+        self.bitmaps.clear();
         self.target = None;
         self.chrome.reset_render_resources();
         unsafe {
@@ -158,7 +167,7 @@ impl AppState {
         }
     }
 
-    fn toggle_slideshow(&mut self) {
+    pub(super) fn toggle_slideshow(&mut self) {
         self.slideshow = !self.slideshow;
         unsafe {
             if self.slideshow {
@@ -177,12 +186,17 @@ impl AppState {
         }
     }
 
-    fn set_animation_timer(&mut self) {
+    pub(super) fn set_animation_timer(&mut self) {
         unsafe {
             let _ = KillTimer(Some(self.hwnd), TIMER_ANIMATION);
         }
         let Some(doc) = &self.document else { return };
-        if doc.format_name == "GIF" && doc.frame_count() > 1 && self.animation_playing {
+        if doc.format_name == "GIF"
+            && doc.frame_count() > 1
+            && self.animation_playing
+            && !self.view_pending
+            && !unsafe { IsIconic(self.hwnd).as_bool() }
+        {
             let delay = doc.current_frame().delay_ms.clamp(20, 60_000);
             unsafe {
                 let _ = SetTimer(Some(self.hwnd), TIMER_ANIMATION, delay, None);
@@ -190,4 +204,3 @@ impl AppState {
         }
     }
 }
-
