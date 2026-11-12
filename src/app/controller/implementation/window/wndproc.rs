@@ -362,17 +362,16 @@ pub(super) unsafe extern "system" fn window_proc(
                     let _ = KillTimer(Some(hwnd), TIMER_VIEW);
                 }
                 state.request_view();
-            } else if wparam.0 == TIMER_SLIDESHOW {
-                state.navigate(1);
-            } else if wparam.0 == TIMER_AUTO_ADVANCE
-                && !unsafe { IsIconic(hwnd).as_bool() }
-                && state.load_started.is_none()
-                && !state.file_busy
-                && state.pending_action.is_none()
-                && state
-                    .document
-                    .as_ref()
-                    .is_some_and(|document| !document.dirty)
+            } else if wparam.0 == TIMER_SLIDESHOW
+                || (wparam.0 == TIMER_AUTO_ADVANCE
+                    && !unsafe { IsIconic(hwnd).as_bool() }
+                    && state.load_started.is_none()
+                    && !state.file_busy
+                    && state.pending_action.is_none()
+                    && state
+                        .document
+                        .as_ref()
+                        .is_some_and(|document| !document.dirty))
             {
                 state.navigate(1);
             } else if wparam.0 == TIMER_FOLDER_REFRESH
