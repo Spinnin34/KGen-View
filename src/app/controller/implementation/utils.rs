@@ -270,33 +270,31 @@ fn shell_archive_contexts(launch_window: HWND) -> Vec<ExplorerArchiveContext> {
         let Ok(browser) = dispatch.cast::<IWebBrowser2>() else {
             continue;
         };
-        let Ok(document) = (unsafe { browser.Document() }) else {
-            continue;
-        };
-        let Ok(view) = document.cast::<IShellFolderViewDual>() else {
-            continue;
-        };
-        let Ok(folder) = (unsafe { view.Folder() }) else {
-            continue;
-        };
-        let Ok(folder) = folder.cast::<Folder2>() else {
-            continue;
-        };
-        let Ok(current_folder) = (unsafe { folder.Self_() }) else {
-            continue;
-        };
-        let Ok(current_path) = (unsafe { current_folder.Path() }) else {
-            continue;
-        };
-        let Ok(current_path) = String::try_from(current_path) else {
-            continue;
-        };
-        let current_path = PathBuf::from(current_path);
-        let Some(archive_path) = current_path
-            .ancestors()
-            .find(|ancestor| archive::is_archive_path(ancestor) && ancestor.is_file())
-            .map(Path::to_path_buf)
-        else {
+        let view = unsafe { browser.Document() }
+            .ok()
+            .and_then(|document| document.cast::<IShellFolderViewDual>().ok());
+        let folder_path = view
+            .as_ref()
+            .and_then(|view| unsafe { view.Folder().ok() })
+            .and_then(|folder| folder.cast::<Folder2>().ok())
+            .and_then(|folder| unsafe { folder.Self_().ok() })
+            .and_then(|item| unsafe { item.Path().ok() })
+            .and_then(|path| String::try_from(path).ok())
+            .map(PathBuf::from);
+        // Modern Explorer tabs may not expose IShellFolderViewDual, or may
+        // return a virtual namespace path. LocationURL can still identify the
+        // compressed folder in either case.
+        let location_path = unsafe { browser.LocationURL().ok() }
+            .and_then(|location| String::try_from(location).ok())
+            .and_then(|location| file_url_to_path(&location));
+        let location = folder_path
+            .and_then(|path| archive_path_for_shell_location(&path).map(|archive| (path, archive)))
+            .or_else(|| {
+                location_path.and_then(|path| {
+                    archive_path_for_shell_location(&path).map(|archive| (path, archive))
+                })
+            });
+        let Some((current_path, archive_path)) = location else {
             continue;
         };
         let member_folder = current_path
@@ -304,9 +302,10 @@ fn shell_archive_contexts(launch_window: HWND) -> Vec<ExplorerArchiveContext> {
             .unwrap_or_else(|_| Path::new(""))
             .to_string_lossy()
             .replace('\\', "/");
-        let focused_item = unsafe { view.FocusedItem() }
-            .ok()
-            .and_then(|item| unsafe { item.Name() }.ok())
+        let focused_item = view
+            .as_ref()
+            .and_then(|view| unsafe { view.FocusedItem().ok() })
+            .and_then(|item| unsafe { item.Name().ok() })
             .and_then(|name| String::try_from(name).ok());
         let foreground = unsafe { browser.HWND() }
             .ok()
@@ -319,6 +318,59 @@ fn shell_archive_contexts(launch_window: HWND) -> Vec<ExplorerArchiveContext> {
         });
     }
     contexts
+}
+
+fn archive_path_for_shell_location(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|ancestor| archive::is_archive_path(ancestor) && ancestor.is_file())
+        .map(Path::to_path_buf)
+}
+
+fn file_url_to_path(url: &str) -> Option<PathBuf> {
+    let (encoded_path, unc) = if url
+        .get(..8)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:///"))
+    {
+        (&url[8..], false)
+    } else if url
+        .get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+    {
+        (&url[7..], true)
+    } else {
+        return None;
+    };
+
+    let mut decoded = Vec::with_capacity(encoded_path.len());
+    let bytes = encoded_path.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = hex_value(*bytes.get(index + 1)?)?;
+            let low = hex_value(*bytes.get(index + 2)?)?;
+            decoded.push(high << 4 | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    let decoded = String::from_utf8(decoded).ok()?;
+    let windows_path = if unc {
+        format!("\\\\{}", decoded.replace('/', "\\"))
+    } else {
+        decoded.replace('/', "\\")
+    };
+    Some(PathBuf::from(windows_path))
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 pub(super) fn integer_variant(value: i32) -> VARIANT {
@@ -381,5 +433,19 @@ mod tests {
             parse_explorer_archive_member_path(&temp.join("Temp12_Comic.zip/readme.txt"), &temp)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn explorer_file_location_urls_resolve_zip_paths() {
+        assert_eq!(
+            file_url_to_path("file:///C:/Users/Ahmed/Comic%20Book.zip"),
+            Some(PathBuf::from(r"C:\Users\Ahmed\Comic Book.zip"))
+        );
+        assert_eq!(
+            file_url_to_path("file://server/share/Comic%20Book.zip"),
+            Some(PathBuf::from(r"\\server\share\Comic Book.zip"))
+        );
+        assert!(file_url_to_path("https://example.com/Comic.zip").is_none());
+        assert!(file_url_to_path("file:///C:/Comic%XZ.zip").is_none());
     }
 }
