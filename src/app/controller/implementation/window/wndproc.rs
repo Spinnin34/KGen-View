@@ -39,6 +39,7 @@ pub(super) unsafe extern "system" fn window_proc(
                 state.chrome.reset_render_resources();
                 unsafe {
                     let _ = KillTimer(Some(hwnd), TIMER_SLIDESHOW);
+                    let _ = KillTimer(Some(hwnd), TIMER_AUTO_ADVANCE);
                 }
             } else if state.slideshow {
                 unsafe {
@@ -46,6 +47,16 @@ pub(super) unsafe extern "system" fn window_proc(
                         Some(hwnd),
                         TIMER_SLIDESHOW,
                         state.settings.slideshow_ms,
+                        None,
+                    );
+                }
+            }
+            if !minimized && state.auto_advance {
+                unsafe {
+                    let _ = SetTimer(
+                        Some(hwnd),
+                        TIMER_AUTO_ADVANCE,
+                        state.settings.auto_advance_ms,
                         None,
                     );
                 }
@@ -352,6 +363,17 @@ pub(super) unsafe extern "system" fn window_proc(
                 }
                 state.request_view();
             } else if wparam.0 == TIMER_SLIDESHOW {
+                state.navigate(1);
+            } else if wparam.0 == TIMER_AUTO_ADVANCE
+                && !unsafe { IsIconic(hwnd).as_bool() }
+                && state.load_started.is_none()
+                && !state.file_busy
+                && state.pending_action.is_none()
+                && state
+                    .document
+                    .as_ref()
+                    .is_some_and(|document| !document.dirty)
+            {
                 state.navigate(1);
             } else if wparam.0 == TIMER_FOLDER_REFRESH
                 && state.load_started.is_none()

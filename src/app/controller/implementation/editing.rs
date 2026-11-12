@@ -171,6 +171,10 @@ impl AppState {
         self.slideshow = !self.slideshow;
         unsafe {
             if self.slideshow {
+                if self.auto_advance {
+                    self.auto_advance = false;
+                    let _ = KillTimer(Some(self.hwnd), TIMER_AUTO_ADVANCE);
+                }
                 let _ = SetTimer(
                     Some(self.hwnd),
                     TIMER_SLIDESHOW,
@@ -183,6 +187,46 @@ impl AppState {
             } else {
                 let _ = KillTimer(Some(self.hwnd), TIMER_SLIDESHOW);
             }
+            self.rebuild_menu();
+        }
+    }
+
+    pub(super) fn toggle_auto_advance(&mut self) {
+        self.auto_advance = !self.auto_advance;
+        unsafe {
+            if self.auto_advance {
+                if self.slideshow {
+                    self.slideshow = false;
+                    let _ = KillTimer(Some(self.hwnd), TIMER_SLIDESHOW);
+                }
+                let _ = SetTimer(
+                    Some(self.hwnd),
+                    TIMER_AUTO_ADVANCE,
+                    self.settings.auto_advance_ms,
+                    None,
+                );
+            } else {
+                let _ = KillTimer(Some(self.hwnd), TIMER_AUTO_ADVANCE);
+            }
+            self.rebuild_menu();
+        }
+    }
+
+    pub(super) fn set_auto_advance_interval(&mut self, interval_ms: u32) {
+        self.settings.auto_advance_ms = interval_ms.clamp(100, 60_000);
+        self.settings.save();
+        if self.auto_advance && !unsafe { IsIconic(self.hwnd).as_bool() } {
+            unsafe {
+                let _ = SetTimer(
+                    Some(self.hwnd),
+                    TIMER_AUTO_ADVANCE,
+                    self.settings.auto_advance_ms,
+                    None,
+                );
+            }
+        }
+        unsafe {
+            self.rebuild_menu();
         }
     }
 

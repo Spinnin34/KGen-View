@@ -50,6 +50,8 @@ impl ThemedMenu {
         capture_enabled: bool,
         capture_start_with_windows: bool,
         capture_hotkey: CaptureHotkey,
+        auto_advance: bool,
+        auto_advance_ms: u32,
     ) -> Result<Self, WinError> {
         let background_color = if dark {
             COLORREF(0x001c1714)
@@ -72,6 +74,8 @@ impl ThemedMenu {
                 capture_enabled,
                 capture_start_with_windows,
                 capture_hotkey,
+                auto_advance,
+                auto_advance_ms,
             )?
         };
         Ok(menu)
@@ -113,6 +117,8 @@ impl ThemedMenu {
         capture_enabled: bool,
         capture_start_with_windows: bool,
         capture_hotkey: CaptureHotkey,
+        auto_advance: bool,
+        auto_advance_ms: u32,
     ) -> Result<(), WinError> {
         let file = unsafe { CreatePopupMenu()? };
         unsafe {
@@ -154,6 +160,50 @@ impl ThemedMenu {
             let view = CreatePopupMenu()?;
             self.item(view, cmd::PREVIOUS, tr(language, Text::Previous))?;
             self.item(view, cmd::NEXT, tr(language, Text::Next))?;
+            self.item(
+                view,
+                cmd::AUTO_ADVANCE,
+                match (language, auto_advance) {
+                    (Language::Spanish, true) => "Auto: activado",
+                    (Language::Spanish, false) => "Auto: desactivado",
+                    (Language::English, true) => "Auto: on",
+                    (Language::English, false) => "Auto: off",
+                },
+            )?;
+            let auto_interval = CreatePopupMenu()?;
+            for (command, interval) in [
+                (cmd::AUTO_INTERVAL_100_MS, 100),
+                (cmd::AUTO_INTERVAL_250_MS, 250),
+                (cmd::AUTO_INTERVAL_500_MS, 500),
+                (cmd::AUTO_INTERVAL_750_MS, 750),
+                (cmd::AUTO_INTERVAL_1000_MS, 1_000),
+                (cmd::AUTO_INTERVAL_2000_MS, 2_000),
+                (cmd::AUTO_INTERVAL_3000_MS, 3_000),
+                (cmd::AUTO_INTERVAL_5000_MS, 5_000),
+            ] {
+                let selected = interval == auto_advance_ms;
+                let suffix = if interval >= 1_000 {
+                    format!("{} s", interval / 1_000)
+                } else {
+                    format!("{interval} ms")
+                };
+                let label = if selected {
+                    format!("[x] {suffix}")
+                } else {
+                    suffix
+                };
+                self.item(auto_interval, command, &label)?;
+            }
+            let current_interval = if auto_advance_ms >= 1_000 {
+                format!("{} s", auto_advance_ms / 1_000)
+            } else {
+                format!("{auto_advance_ms} ms")
+            };
+            let interval_label = match language {
+                Language::Spanish => format!("Intervalo Auto ({current_interval})"),
+                Language::English => format!("Auto interval ({current_interval})"),
+            };
+            self.popup(view, auto_interval, &interval_label)?;
             self.item(view, cmd::ACTUAL, tr(language, Text::ActualSize))?;
             self.item(view, cmd::FIT, tr(language, Text::Fit))?;
             self.item(view, cmd::FIT_WIDTH, tr(language, Text::FitWidth))?;

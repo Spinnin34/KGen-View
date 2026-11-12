@@ -10,6 +10,8 @@ impl AppState {
             self.settings.capture_enabled,
             self.settings.capture_start_with_windows,
             self.settings.capture_hotkey,
+            self.auto_advance,
+            self.settings.auto_advance_ms,
         ) {
             self.menu = Some(menu);
             let _ = unsafe { InvalidateRect(Some(self.hwnd), None, false) };
@@ -92,6 +94,15 @@ impl AppState {
             cmd::FIT_WIDTH => self.set_zoom(ZoomMode::FitWidth),
             cmd::FULLSCREEN => self.toggle_fullscreen(),
             cmd::SLIDESHOW => self.toggle_slideshow(),
+            cmd::AUTO_ADVANCE => self.toggle_auto_advance(),
+            cmd::AUTO_INTERVAL_100_MS => self.set_auto_advance_interval(100),
+            cmd::AUTO_INTERVAL_250_MS => self.set_auto_advance_interval(250),
+            cmd::AUTO_INTERVAL_500_MS => self.set_auto_advance_interval(500),
+            cmd::AUTO_INTERVAL_750_MS => self.set_auto_advance_interval(750),
+            cmd::AUTO_INTERVAL_1000_MS => self.set_auto_advance_interval(1_000),
+            cmd::AUTO_INTERVAL_2000_MS => self.set_auto_advance_interval(2_000),
+            cmd::AUTO_INTERVAL_3000_MS => self.set_auto_advance_interval(3_000),
+            cmd::AUTO_INTERVAL_5000_MS => self.set_auto_advance_interval(5_000),
             cmd::PAUSE_ANIMATION => {
                 self.animation_playing = !self.animation_playing;
                 self.set_animation_timer();

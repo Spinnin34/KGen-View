@@ -123,6 +123,7 @@ const TIMER_ANIMATION: usize = 1;
 const TIMER_SLIDESHOW: usize = 2;
 const TIMER_FOLDER_REFRESH: usize = 3;
 const TIMER_AUTO_RESIZE: usize = 4;
+const TIMER_AUTO_ADVANCE: usize = 6;
 const FOLDER_REFRESH_INTERVAL_MS: u32 = 5_000;
 const AUTO_RESIZE_DELAY_MS: u32 = 120;
 #[derive(Clone, Copy, Debug)]
@@ -239,6 +240,7 @@ struct AppState {
     saved_rect: RECT,
     saved_style: WINDOW_STYLE,
     slideshow: bool,
+    auto_advance: bool,
     animation_playing: bool,
     failed_paths: HashSet<PathBuf>,
     load_started: Option<Instant>,

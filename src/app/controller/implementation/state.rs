@@ -58,6 +58,7 @@ impl AppState {
             saved_rect: RECT::default(),
             saved_style: WS_OVERLAPPEDWINDOW,
             slideshow: false,
+            auto_advance: false,
             animation_playing: true,
             failed_paths: HashSet::new(),
             load_started: None,
