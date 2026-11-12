@@ -100,12 +100,45 @@ pub(super) fn display_path(path: &Path) -> String {
 }
 
 pub(super) fn command_line_paths() -> Vec<PathBuf> {
-    std::env::args_os()
-        .skip(1)
-        .map(PathBuf::from)
-        .filter(|path| path.as_os_str() != "--mcp")
-        .filter(|path| path.exists())
-        .collect()
+    let mut arguments = std::env::args_os().skip(1);
+    let mut paths = Vec::new();
+    while let Some(argument) = arguments.next() {
+        if argument == "--mcp" {
+            continue;
+        }
+        if argument == "--open-archive-member" {
+            arguments.next();
+            arguments.next();
+            continue;
+        }
+        let path = PathBuf::from(argument);
+        if path.exists() {
+            paths.push(path);
+        }
+    }
+    paths
+}
+
+pub(super) fn restored_archive_member() -> Option<ExplorerArchiveSelection> {
+    let mut arguments = std::env::args_os().skip(1);
+    while let Some(argument) = arguments.next() {
+        if argument != "--open-archive-member" {
+            continue;
+        }
+        let archive_path = PathBuf::from(arguments.next()?);
+        let member_name = arguments.next()?.into_string().ok()?;
+        if !archive::is_archive_path(&archive_path)
+            || !archive_path.is_file()
+            || member_name.is_empty()
+        {
+            return None;
+        }
+        return Some(ExplorerArchiveSelection {
+            archive_path,
+            member_name,
+        });
+    }
+    None
 }
 
 struct ExplorerArchiveContext {

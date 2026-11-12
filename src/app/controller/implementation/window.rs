@@ -31,9 +31,11 @@ pub fn run() -> Result<(), WinError> {
     let settings = Settings::load();
     let capture_enabled = settings.capture_enabled;
     let paths = command_line_paths();
-    let initial_archive_selection = paths
-        .first()
-        .and_then(|path| resolve_explorer_archive_selection(path, launch_window));
+    let initial_archive_selection = restored_archive_member().or_else(|| {
+        paths
+            .first()
+            .and_then(|path| resolve_explorer_archive_selection(path, launch_window))
+    });
     let always_on_top = settings.always_on_top;
     let raw_state = Box::into_raw(Box::new(AppState::new(settings)?));
     let hwnd = unsafe {
@@ -76,6 +78,15 @@ pub fn run() -> Result<(), WinError> {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
     }
+    updater::register_restart(
+        paths.first().map(PathBuf::as_path),
+        initial_archive_selection.as_ref().map(|selection| {
+            (
+                selection.archive_path.as_path(),
+                selection.member_name.as_str(),
+            )
+        }),
+    );
     unsafe {
         state_mut(hwnd).begin_update_check();
     }

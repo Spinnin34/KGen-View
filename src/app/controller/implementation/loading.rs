@@ -184,6 +184,7 @@ impl AppState {
                 self.requested_page = document.frame_index;
                 self.document = Some(document);
                 self.retain_active_archive_session();
+                self.refresh_restart_registration();
                 self.folder_watcher.watch(if self.active_archive.is_some() {
                     None
                 } else {
@@ -339,6 +340,16 @@ impl AppState {
         } else {
             self.archive_sessions.clear();
         }
+    }
+
+    pub(super) fn refresh_restart_registration(&self) {
+        let Some(document) = &self.document else {
+            return;
+        };
+        let archive_member = self
+            .active_archive_member(&document.path)
+            .map(|(archive, member)| (archive.source_path(), member));
+        updater::register_restart(Some(&document.path), archive_member);
     }
 
     pub(super) fn cache_document(&mut self, path: PathBuf, document: ImageDocument) {

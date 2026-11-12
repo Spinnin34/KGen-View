@@ -1,5 +1,5 @@
 use std::{
-    ffi::c_void,
+    ffi::{OsStr, OsString, c_void},
     fs::{self, OpenOptions},
     io::Write,
     os::windows::ffi::OsStrExt,
@@ -84,9 +84,6 @@ pub fn start_check(
     if !is_installed_copy() {
         return Ok(());
     }
-    unsafe {
-        let _ = RegisterApplicationRestart(PCWSTR::null(), REGISTER_APPLICATION_RESTART_FLAGS(0));
-    }
     let target = hwnd.0 as usize;
     thread::Builder::new()
         .name("kgen-update-check".into())
@@ -100,6 +97,90 @@ pub fn start_check(
         })
         .map(|_| ())
         .map_err(|error| format!("No se pudo iniciar la comprobación de actualizaciones: {error}"))
+}
+
+pub fn register_restart(path: Option<&Path>, archive_member: Option<(&Path, &str)>) {
+    if !is_installed_copy() {
+        return;
+    }
+
+    let mut arguments = Vec::new();
+    if let Some((archive_path, member_name)) = archive_member {
+        arguments.push(OsString::from("--open-archive-member"));
+        arguments.push(archive_path.as_os_str().to_os_string());
+        arguments.push(OsString::from(member_name));
+    } else if let Some(path) = path {
+        arguments.push(path.as_os_str().to_os_string());
+    }
+    if std::env::args_os().any(|argument| argument == "--mcp") {
+        arguments.push(OsString::from("--mcp"));
+    }
+
+    let mut encoded = encode_restart_arguments(&arguments);
+    if encoded.is_none()
+        && let Some((archive_path, _)) = archive_member
+    {
+        let mut fallback = vec![archive_path.as_os_str().to_os_string()];
+        if std::env::args_os().any(|argument| argument == "--mcp") {
+            fallback.push(OsString::from("--mcp"));
+        }
+        encoded = encode_restart_arguments(&fallback);
+    }
+    let Some(encoded) = encoded else {
+        return;
+    };
+    let command_line = if encoded.len() == 1 {
+        PCWSTR::null()
+    } else {
+        PCWSTR(encoded.as_ptr())
+    };
+    unsafe {
+        let _ = RegisterApplicationRestart(command_line, REGISTER_APPLICATION_RESTART_FLAGS(0));
+    }
+}
+
+fn encode_restart_arguments(arguments: &[OsString]) -> Option<Vec<u16>> {
+    let mut encoded = Vec::new();
+    for argument in arguments {
+        if !encoded.is_empty() {
+            encoded.push(b' ' as u16);
+        }
+        quote_windows_argument(argument, &mut encoded);
+        if encoded.len() > 1023 {
+            return None;
+        }
+    }
+    encoded.push(0);
+    Some(encoded)
+}
+
+fn quote_windows_argument(argument: &OsStr, output: &mut Vec<u16>) {
+    const QUOTE: u16 = b'"' as u16;
+    const BACKSLASH: u16 = b'\\' as u16;
+
+    output.push(QUOTE);
+    let mut backslashes = 0usize;
+    for unit in argument.encode_wide() {
+        if unit == BACKSLASH {
+            backslashes = backslashes.saturating_add(1);
+            continue;
+        }
+        if unit == QUOTE {
+            output.extend(std::iter::repeat_n(
+                BACKSLASH,
+                backslashes.saturating_mul(2) + 1,
+            ));
+        } else {
+            output.extend(std::iter::repeat_n(BACKSLASH, backslashes));
+        }
+        output.push(unit);
+        backslashes = 0;
+    }
+    output.extend(std::iter::repeat_n(
+        BACKSLASH,
+        backslashes.saturating_mul(2),
+    ));
+    output.push(QUOTE);
 }
 
 pub fn start_install(

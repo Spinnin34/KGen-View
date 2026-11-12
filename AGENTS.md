@@ -12,5 +12,6 @@
 
 - Conserva `schema_version: 1` del manifiesto, el repositorio `Spinnin34/KGen-View`, las URLs HTTPS de GitHub permitidas y la verificación SHA-256 del instalador antes de ejecutarlo.
 - Mantén el actualizador fuera del hilo de interfaz, limita tamaños y tiempos de descarga y no ejecutes una descarga cuya huella o tamaño no coincidan.
+- Conserva las imágenes abiertas al actualizar: cada proceso/ventana registra su archivo actual con `RegisterApplicationRestart`, y las selecciones de ZIP deben restaurar archivo y miembro. Al cambiar la carga, navegación o ruta guardada, actualiza también los argumentos de reinicio.
 - La publicación actual no tiene firma Authenticode: HTTPS y SHA-256 detectan corrupción, pero no autentican al publicador de forma independiente. No afirmes lo contrario.
 - Las copias portables no reciben instalación automática; documenta cualquier cambio de este comportamiento.

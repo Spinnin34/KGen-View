@@ -159,7 +159,7 @@ La firma requiere `signtool.exe`, incluido en el Windows SDK.
 
 ## Privacidad y red
 
-KGen View no recopila telemetría. En cada inicio, las instalaciones verifican las versiones publicadas en GitHub mediante HTTPS; al descargar una actualización, la app comprueba su SHA-256 antes de abrir el instalador. El actualizador no descarga ni ejecuta un instalador cuyo hash no coincida. Como todavía no hay un certificado Authenticode, el hash comprueba la integridad respecto al manifiesto publicado, pero no autentica por separado al editor. La app también usa la red cuando se selecciona **Copiar enlace directo (ImgBB)**.
+KGen View no recopila telemetría. En cada inicio, las instalaciones verifican las versiones publicadas en GitHub mediante HTTPS; al descargar una actualización, la app comprueba su SHA-256 antes de abrir el instalador. Tras actualizar, Windows vuelve a abrir cada instancia con su imagen actual; si estaba abierta una imagen de ZIP/CBZ, restaura también el archivo y miembro. El actualizador no descarga ni ejecuta un instalador cuyo hash no coincida. Como todavía no hay un certificado Authenticode, el hash comprueba la integridad respecto al manifiesto publicado, pero no autentica por separado al editor. La app también usa la red cuando se selecciona **Copiar enlace directo (ImgBB)**.
 
 Esta función necesita una clave API de ImgBB, que se configura desde **Información de imagen**. Al usarla, el archivo original se envía a `api.imgbb.com` mediante HTTPS y el enlace directo resultante se copia al portapapeles. ImgBB limita la subida a imágenes de hasta 32 MiB.
 

@@ -80,6 +80,7 @@ impl AppState {
                         self.document = Some(*document);
                         self.set_animation_timer();
                         self.retain_active_archive_session();
+                        self.refresh_restart_registration();
                         self.invalidate_image();
                         self.update_title();
                         self.schedule_view();
