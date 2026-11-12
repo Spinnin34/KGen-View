@@ -1,5 +1,4 @@
 #define MyAppName "KGen View"
-#define MyAppVersion "1.2.0"
 #define MyAppExeName "KGenView.exe"
 
 [Setup]
@@ -12,6 +11,8 @@ DefaultDirName={localappdata}\Programs\KGenView
 DefaultGroupName=KGen View
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
+CloseApplications=yes
+RestartApplications=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
@@ -42,8 +43,8 @@ Source: "..\dist\KGenView.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\target\filetype-icons\*.ico"; DestDir: "{app}\icons"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\KGen View"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\KGen View"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\KGen View"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "KGen.View"
+Name: "{autodesktop}\KGen View"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "KGen.View"; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\KGenView.exe"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey
@@ -133,6 +134,9 @@ Root: HKCU; Subkey: "Software\Classes\.cbz\OpenWithProgids"; ValueType: none; Va
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,KGen View}"; Flags: nowait postinstall skipifsilent
 
+[UninstallRun]
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--capture-stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopCaptureHost"
+
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
 var
@@ -151,4 +155,10 @@ begin
     RegDeleteValue(HKCU, 'Software\Classes\.jpeg\OpenWithProgids', 'KGenView.jpg');
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\KGenView.Image');
   end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'KGenViewCapture');
 end;

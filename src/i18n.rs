@@ -64,6 +64,9 @@ pub enum Text {
     NoImage,
     Unsupported,
     CodecMissing,
+    DownloadUpdate,
+    DownloadingUpdate,
+    InstallingUpdate,
     SaveChanges,
     ConfirmDelete,
     Error,
@@ -112,6 +115,9 @@ pub fn tr(lang: Language, key: Text) -> &'static str {
         (Language::Spanish, NoImage) => "Abre o arrastra una imagen",
         (Language::Spanish, Unsupported) => "No se pudo abrir la imagen.",
         (Language::Spanish, CodecMissing) => "Puede faltar el codec de Windows para este formato.",
+        (Language::Spanish, DownloadUpdate) => "Descargar actualización",
+        (Language::Spanish, DownloadingUpdate) => "Descargando actualización…",
+        (Language::Spanish, InstallingUpdate) => "Instalando actualización…",
         (Language::Spanish, SaveChanges) => {
             "La imagen tiene cambios sin guardar. ¿Quieres guardarlos?"
         }
@@ -158,6 +164,9 @@ pub fn tr(lang: Language, key: Text) -> &'static str {
         (Language::English, NoImage) => "Open or drop an image",
         (Language::English, Unsupported) => "The image could not be opened.",
         (Language::English, CodecMissing) => "The Windows codec for this format may be missing.",
+        (Language::English, DownloadUpdate) => "Download update",
+        (Language::English, DownloadingUpdate) => "Downloading update…",
+        (Language::English, InstallingUpdate) => "Installing update…",
         (Language::English, SaveChanges) => {
             "This image has unsaved changes. Do you want to save them?"
         }

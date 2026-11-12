@@ -535,6 +535,7 @@ dependencies = [
  "gif 0.14.2",
  "image",
  "jxl-oxide",
+ "png 0.18.1",
  "resvg",
  "serde_json",
  "windows",

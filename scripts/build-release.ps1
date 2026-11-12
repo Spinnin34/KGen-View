@@ -1,6 +1,24 @@
+param(
+    [switch]$SkipValidation,
+    [string]$BuildId = $env:KGEN_BUILD_ID
+)
+
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $DistDirectory = Join-Path $ProjectRoot 'dist'
+$CargoManifest = Join-Path $ProjectRoot 'Cargo.toml'
+$CargoVersionLine = Select-String -LiteralPath $CargoManifest -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+if (-not $CargoVersionLine) {
+    throw 'No se pudo leer la versión de Cargo.toml.'
+}
+$PackageVersion = $CargoVersionLine.Matches[0].Groups[1].Value
+if (-not $BuildId) {
+    $BuildId = (git -C $ProjectRoot rev-parse HEAD).Trim()
+}
+if (-not $BuildId) {
+    $BuildId = 'local'
+}
+$env:KGEN_BUILD_ID = $BuildId
 $SigningCertificate = $env:KGEN_SIGN_CERT
 $SigningPassword = $env:KGEN_SIGN_PASSWORD
 $SignToolPath = $null
@@ -46,15 +64,17 @@ function Sign-ReleaseFile {
 
 Push-Location $ProjectRoot
 try {
+    if (-not $SkipValidation) {
     cargo fmt -- --check
     if ($LASTEXITCODE -ne 0) { throw 'cargo fmt falló' }
     # Existing Win32 dialog helpers intentionally keep their compact call
     # signatures; keep the rest of the lint gate strict for release builds.
-    cargo clippy --all-targets -- -D warnings -A clippy::too_many_arguments
+    cargo clippy --locked --all-targets -- -D warnings -A clippy::too_many_arguments
     if ($LASTEXITCODE -ne 0) { throw 'cargo clippy falló' }
-    cargo test
+    cargo test --locked
     if ($LASTEXITCODE -ne 0) { throw 'cargo test falló' }
-    cargo build --release
+    }
+    cargo build --locked --release
     if ($LASTEXITCODE -ne 0) { throw 'cargo build --release falló' }
     New-Item -ItemType Directory -Force -Path $DistDirectory | Out-Null
     $ExecutablePath = Join-Path $DistDirectory 'KGenView.exe'
@@ -69,7 +89,7 @@ try {
     if (-not $InnoCompiler) {
         throw 'Inno Setup 6 no está instalado. Instálalo con: winget install --id JRSoftware.InnoSetup -e'
     }
-    & $InnoCompiler (Join-Path $ProjectRoot 'installer\KGenView.iss')
+    & $InnoCompiler "/DMyAppVersion=$PackageVersion" (Join-Path $ProjectRoot 'installer\KGenView.iss')
     if ($LASTEXITCODE -ne 0) { throw 'La compilación del instalador falló' }
     Sign-ReleaseFile (Join-Path $DistDirectory 'KGenView-Setup-x64.exe')
 }

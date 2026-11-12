@@ -5,6 +5,24 @@ fn main() {
     println!("cargo:rerun-if-changed=resources/kgen-view-logo.png");
     println!("cargo:rerun-if-changed=resources/toolbar");
     println!("cargo:rerun-if-changed=vendor/IrfanView-Filetype-IconsChanger/Icon");
+    println!("cargo:rerun-if-env-changed=KGEN_BUILD_ID");
+
+    let version = env::var("CARGO_PKG_VERSION").expect("Cargo package version");
+    let mut components = version.split(['.', '-', '+']);
+    let version_numbers = [
+        components.next().unwrap_or("1").parse::<u32>().unwrap_or(1),
+        components.next().unwrap_or("0").parse::<u32>().unwrap_or(0),
+        components.next().unwrap_or("0").parse::<u32>().unwrap_or(0),
+    ];
+    let build_id = env::var("KGEN_BUILD_ID").unwrap_or_else(|_| "local".to_string());
+    if build_id.is_empty()
+        || !build_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        panic!("KGEN_BUILD_ID must contain only ASCII letters, digits, '-' or '_'");
+    }
+    println!("cargo:rustc-env=KGEN_BUILD_ID={build_id}");
 
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     let icon = out.join("kgen-view.ico");
@@ -57,8 +75,8 @@ fn main() {
             r#"#include <windows.h>
 1 ICON "{icon_path}"
 1 VERSIONINFO
-FILEVERSION 1,2,0,0
-PRODUCTVERSION 1,2,0,0
+FILEVERSION {major},{minor},{patch},0
+PRODUCTVERSION {major},{minor},{patch},0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS VOS_NT_WINDOWS32
@@ -71,11 +89,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "KGen View"
       VALUE "FileDescription", "KGen View - Visor de imagenes"
-      VALUE "FileVersion", "1.2.0"
+      VALUE "FileVersion", "{version}"
       VALUE "InternalName", "KGenView"
       VALUE "OriginalFilename", "KGenView.exe"
       VALUE "ProductName", "KGen View"
-      VALUE "ProductVersion", "1.2.0"
+      VALUE "ProductVersion", "{version}"
     END
   END
   BLOCK "VarFileInfo"
@@ -84,7 +102,11 @@ BEGIN
   END
 END
 1 24 "{manifest}"
-"#
+"#,
+            major = version_numbers[0],
+            minor = version_numbers[1],
+            patch = version_numbers[2],
+            version = version,
         ),
     )
     .expect("write generated resource script");
@@ -98,7 +120,7 @@ fn build_toolbar_atlas() -> Vec<u8> {
     use image::imageops::FilterType;
 
     const SIZE: u32 = 48;
-    const NAMES: [&str; 10] = [
+    const NAMES: [&str; 11] = [
         "open",
         "save",
         "previous",
@@ -109,6 +131,7 @@ fn build_toolbar_atlas() -> Vec<u8> {
         "rotate-left",
         "rotate-right",
         "fullscreen",
+        "download",
     ];
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"))
         .join("resources")
@@ -117,9 +140,13 @@ fn build_toolbar_atlas() -> Vec<u8> {
     let decoded: Vec<_> = NAMES
         .into_iter()
         .map(|name| {
-            let source = image::open(root.join(format!("{name}.png")))
-                .unwrap_or_else(|error| panic!("decode toolbar icon {name}: {error}"))
-                .into_rgba8();
+            let source = if name == "download" {
+                build_download_icon()
+            } else {
+                image::open(root.join(format!("{name}.png")))
+                    .unwrap_or_else(|error| panic!("decode toolbar icon {name}: {error}"))
+                    .into_rgba8()
+            };
             image::imageops::resize(&source, SIZE, SIZE, FilterType::Lanczos3)
         })
         .collect();
@@ -135,6 +162,74 @@ fn build_toolbar_atlas() -> Vec<u8> {
         }
     }
     atlas
+}
+
+fn build_download_icon() -> image::RgbaImage {
+    use image::{Rgba, RgbaImage};
+
+    const SIZE: u32 = 128;
+    const CORNER: u32 = 17;
+    let mut image = RgbaImage::new(SIZE, SIZE);
+    let background = Rgba([184, 255, 133, 255]);
+    let foreground = Rgba([65, 105, 64, 255]);
+
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let center_x = if x < CORNER {
+                CORNER
+            } else if x >= SIZE - CORNER {
+                SIZE - CORNER - 1
+            } else {
+                x
+            };
+            let center_y = if y < CORNER {
+                CORNER
+            } else if y >= SIZE - CORNER {
+                SIZE - CORNER - 1
+            } else {
+                y
+            };
+            let dx = x as i32 - center_x as i32;
+            let dy = y as i32 - center_y as i32;
+            if dx * dx + dy * dy <= (CORNER * CORNER) as i32 {
+                image.put_pixel(x, y, background);
+            }
+        }
+    }
+
+    draw_icon_stroke(&mut image, (64.0, 30.0), (64.0, 82.0), 8.0, foreground);
+    draw_icon_stroke(&mut image, (43.0, 58.0), (64.0, 83.0), 8.0, foreground);
+    draw_icon_stroke(&mut image, (85.0, 58.0), (64.0, 83.0), 8.0, foreground);
+    draw_icon_stroke(&mut image, (26.0, 98.0), (102.0, 98.0), 8.0, foreground);
+    image
+}
+
+fn draw_icon_stroke(
+    image: &mut image::RgbaImage,
+    start: (f32, f32),
+    end: (f32, f32),
+    width: f32,
+    color: image::Rgba<u8>,
+) {
+    let dx = end.0 - start.0;
+    let dy = end.1 - start.1;
+    let length_squared = dx * dx + dy * dy;
+    let radius = width * 0.5;
+    for y in 0..image.height() {
+        for x in 0..image.width() {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let projection =
+                (((px - start.0) * dx + (py - start.1) * dy) / length_squared).clamp(0.0, 1.0);
+            let nearest_x = start.0 + projection * dx;
+            let nearest_y = start.1 + projection * dy;
+            let offset_x = px - nearest_x;
+            let offset_y = py - nearest_y;
+            if offset_x * offset_x + offset_y * offset_y <= radius * radius {
+                image.put_pixel(x, y, color);
+            }
+        }
+    }
 }
 
 fn build_icon(logo: &std::path::Path) -> Vec<u8> {

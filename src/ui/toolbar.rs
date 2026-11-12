@@ -12,7 +12,7 @@ pub struct ToolbarItem {
     pub label: &'static str,
 }
 
-const ITEMS: [ToolbarItem; 10] = [
+const ITEMS: [ToolbarItem; 11] = [
     ToolbarItem {
         command: commands::OPEN,
         group: 0,
@@ -72,6 +72,12 @@ const ITEMS: [ToolbarItem; 10] = [
         group: 3,
         icon: Icon::Fullscreen,
         label: "Pantalla completa",
+    },
+    ToolbarItem {
+        command: commands::UPDATE,
+        group: 4,
+        icon: Icon::Download,
+        label: "Descargar actualización",
     },
 ];
 

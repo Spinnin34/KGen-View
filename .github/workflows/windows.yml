@@ -1,4 +1,4 @@
-name: Windows quality
+name: Windows CI and release
 
 on:
   push:
@@ -7,10 +7,6 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  group: windows-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   quality:
@@ -32,3 +28,71 @@ jobs:
         run: cargo test --locked
       - name: Optimized build
         run: cargo build --locked --release
+
+  publish:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: quality
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Prepare release metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          $versionLine = Select-String -LiteralPath Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          if (-not $versionLine) { throw 'No se pudo leer la versión de Cargo.toml.' }
+          $version = $versionLine.Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tag = $env:GITHUB_REF_NAME
+            if ($tag -ne "v$version") { throw "La etiqueta $tag no coincide con la versión v$version de Cargo.toml." }
+            $channel = 'stable'
+          } else {
+            $shortSha = $env:GITHUB_SHA.Substring(0, 12)
+            $tag = "beta-$env:GITHUB_RUN_NUMBER-$env:GITHUB_RUN_ATTEMPT-$shortSha"
+            $channel = 'beta'
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "channel=$channel" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Build installer and portable executable
+        shell: pwsh
+        env:
+          KGEN_BUILD_ID: ${{ github.sha }}
+        run: .\scripts\build-release.ps1 -SkipValidation
+      - name: Create checksums and update manifest
+        shell: pwsh
+        run: |
+          .\scripts\create-release-manifest.ps1 `
+            -BuildId '${{ github.sha }}' `
+            -Version '${{ steps.metadata.outputs.version }}' `
+            -ReleaseTag '${{ steps.metadata.outputs.tag }}' `
+            -Channel '${{ steps.metadata.outputs.channel }}'
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.metadata.outputs.tag }}'
+          $channel = '${{ steps.metadata.outputs.channel }}'
+          $version = '${{ steps.metadata.outputs.version }}'
+          $title = if ($channel -eq 'stable') { "KGen View v$version" } else { "KGen View $version beta $env:GITHUB_RUN_NUMBER" }
+          $notes = "Canal: $channel`nBuild: $env:GITHUB_SHA`n`nDescarga el instalador para actualizar la copia instalada."
+          $arguments = @('release', 'create', $tag, 'dist/KGenView-Setup-x64.exe', 'dist/KGenView.exe', 'dist/update.json', 'dist/SHA256SUMS.txt', '--title', $title, '--notes', $notes)
+          if ($channel -eq 'beta') {
+            $arguments += @('--prerelease', '--target', $env:GITHUB_SHA)
+          } else {
+            $arguments += '--verify-tag'
+          }
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudo publicar la release de GitHub.' }

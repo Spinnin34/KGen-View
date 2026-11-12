@@ -1,9 +1,11 @@
+use std::os::windows::ffi::OsStrExt;
+
 use windows::{
     Win32::{
         Foundation::ERROR_SUCCESS,
         System::Registry::{
-            HKEY_CURRENT_USER, REG_DWORD, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW,
-            RegSetKeyValueW,
+            HKEY_CURRENT_USER, REG_DWORD, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+            RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
         },
     },
     core::PCWSTR,
@@ -29,6 +31,25 @@ pub struct Settings {
     pub slideshow_ms: u32,
     pub confirm_delete: bool,
     pub imgbb_api_key: String,
+    pub capture_enabled: bool,
+    pub capture_start_with_windows: bool,
+    pub capture_hotkey: CaptureHotkey,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CaptureHotkey {
+    pub key: u32,
+    /// RegisterHotKey modifier bits: Alt=1, Control=2, Shift=4, Windows=8.
+    pub modifiers: u32,
+}
+
+impl Default for CaptureHotkey {
+    fn default() -> Self {
+        Self {
+            key: 0x5a,       // VK_Z
+            modifiers: 0x0a, // Control + Windows
+        }
+    }
 }
 
 impl Default for Settings {
@@ -41,6 +62,9 @@ impl Default for Settings {
             slideshow_ms: 3000,
             confirm_delete: true,
             imgbb_api_key: String::new(),
+            capture_enabled: false,
+            capture_start_with_windows: false,
+            capture_hotkey: CaptureHotkey::default(),
         }
     }
 }
@@ -48,6 +72,24 @@ impl Default for Settings {
 impl Settings {
     pub fn load() -> Self {
         let defaults = Self::default();
+        let saved_capture_key = read_dword("CaptureHotkeyKey");
+        let saved_capture_modifiers = read_dword("CaptureHotkeyModifiers");
+        // Migrate the previous out-of-box Print Screen and Ctrl+Shift+Z
+        // bindings while retaining any other shortcut the user configured.
+        let previous_default = (saved_capture_key == Some(0x2c)
+            && saved_capture_modifiers.unwrap_or(0) == 0)
+            || (saved_capture_key == Some(0x5a) && saved_capture_modifiers == Some(0x06));
+        let capture_hotkey = if previous_default {
+            defaults.capture_hotkey
+        } else {
+            CaptureHotkey {
+                key: saved_capture_key
+                    .filter(|value| (1..=0xff).contains(value))
+                    .unwrap_or(defaults.capture_hotkey.key),
+                modifiers: saved_capture_modifiers.unwrap_or(defaults.capture_hotkey.modifiers)
+                    & 0x0f,
+            }
+        };
         Self {
             language: match read_dword("Language") {
                 Some(1) => Language::English,
@@ -64,6 +106,13 @@ impl Settings {
             slideshow_ms: read_dword("SlideshowMs").unwrap_or(3000).clamp(500, 60_000),
             confirm_delete: read_dword("ConfirmDelete").map(|v| v != 0).unwrap_or(true),
             imgbb_api_key: read_string("ImgBbApiKey").unwrap_or_default(),
+            capture_enabled: read_dword("CaptureEnabled")
+                .map(|v| v != 0)
+                .unwrap_or(false),
+            capture_start_with_windows: read_dword("CaptureStartup")
+                .map(|v| v != 0)
+                .unwrap_or(false),
+            capture_hotkey,
         }
     }
 
@@ -89,6 +138,11 @@ impl Settings {
         write_dword("SlideshowMs", self.slideshow_ms);
         write_dword("ConfirmDelete", self.confirm_delete as u32);
         write_string("ImgBbApiKey", &self.imgbb_api_key);
+        write_dword("CaptureEnabled", self.capture_enabled as u32);
+        write_dword("CaptureStartup", self.capture_start_with_windows as u32);
+        write_dword("CaptureHotkeyKey", self.capture_hotkey.key);
+        write_dword("CaptureHotkeyModifiers", self.capture_hotkey.modifiers);
+        sync_capture_startup(self.capture_enabled && self.capture_start_with_windows);
     }
 
     pub fn is_dark(&self) -> bool {
@@ -106,6 +160,40 @@ impl Settings {
             ThemeMode::Light => ThemeMode::System,
         };
         self.save();
+    }
+}
+
+fn sync_capture_startup(enabled: bool) {
+    const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    const VALUE_NAME: &str = "KGenViewCapture";
+    let key = wide(RUN_KEY);
+    let name = wide(VALUE_NAME);
+    if enabled {
+        let Some(executable) = std::env::current_exe().ok() else {
+            return;
+        };
+        let mut command = vec![b'"' as u16];
+        command.extend(executable.as_os_str().encode_wide());
+        command.extend("\" --capture-background".encode_utf16());
+        command.push(0);
+        unsafe {
+            let _ = RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                PCWSTR(key.as_ptr()),
+                PCWSTR(name.as_ptr()),
+                REG_SZ.0,
+                Some(command.as_ptr().cast()),
+                (command.len() * 2) as u32,
+            );
+        }
+    } else {
+        unsafe {
+            let _ = RegDeleteKeyValueW(
+                HKEY_CURRENT_USER,
+                PCWSTR(key.as_ptr()),
+                PCWSTR(name.as_ptr()),
+            );
+        }
     }
 }
 

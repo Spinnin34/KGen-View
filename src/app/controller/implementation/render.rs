@@ -24,7 +24,12 @@ impl AppState {
         unsafe {
             let _ = GetClientRect(self.hwnd, &mut rect);
         }
-        ChromeLayout::calculate(self.hwnd, rect, self.fullscreen)
+        ChromeLayout::calculate(
+            self.hwnd,
+            rect,
+            self.fullscreen,
+            self.update_available.is_some(),
+        )
     }
 
     pub(super) fn keeps_window_size(&self) -> bool {

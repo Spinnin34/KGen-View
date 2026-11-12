@@ -11,6 +11,7 @@ mod navigation;
 mod render;
 mod state;
 mod status;
+mod update;
 mod utils;
 mod view;
 mod window;

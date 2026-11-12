@@ -40,10 +40,12 @@ KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está constr
 - Opción **Ver → Siempre encima** para mantener la ventana activa sobre las demás aplicaciones.
 - Guardar como con los codificadores de imagen detectados en Windows Imaging Component (WIC).
 - Copiar la imagen o su ruta al portapapeles.
+- Actualizaciones desde GitHub: la instalación comprueba versiones al iniciar y muestra un botón para descargar e instalar la publicación más reciente.
+- Captura rectangular opcional con atajo global; copia la imagen y la guarda en `Imagenes\KGen`.
 - Envío a la Papelera de reciclaje con confirmación configurable.
 - Presentación con intervalo configurable.
 - Salto automático de archivos dañados o incompatibles durante la navegación.
-- Sin telemetría, WebView ni procesos auxiliares.
+- Sin telemetría ni WebView; el proceso residente de captura solo se inicia al activar esa función.
 
 ## Formatos
 
@@ -76,6 +78,8 @@ La opción **Guardar como** también ofrece los codificadores disponibles y cons
 
 ## Atajos de teclado
 
+Activa **Opciones -> Activar captura rectangular** para habilitar la captura. Cada seleccion se copia como imagen al portapapeles y se guarda como PNG en la carpeta conocida **Imagenes\KGen** de Windows. Al terminar, KGen muestra una notificacion de Windows y reproduce el sonido de sistema. El marco cuadrado de 1 px usa dibujo GDI nativo; `Esc` cancela. En **Opciones -> Cambiar atajo de captura** puedes elegir otra combinacion, incluida la tecla Windows; **Iniciar capturas con Windows** es una opcion separada y esta desactivada inicialmente. El capturador residente no usa sondeo periodico. Si cierras KGen View mientras esta activo, el capturador permanece oculto; vuelve a abrir KGen View y desactivalo desde **Opciones** para detenerlo.
+
 | Acción | Atajo |
 |---|---|
 | Abrir imagen | `Ctrl + O` |
@@ -93,12 +97,15 @@ La opción **Guardar como** también ofrece los codificadores disponibles y cons
 | Pausar o reanudar animación | `Espacio` |
 | Presentación | `F5` |
 | Recargar imagen | `F9` |
+| Captura rectangular (si esta activada) | `Ctrl + Win + Z` (configurable) |
 | Pantalla completa | `F11` |
 | Salir de pantalla completa | `Esc` |
 | Enviar a la Papelera | `Supr` |
 | Información de la imagen | `I` |
 
 ## Instalación
+
+Las instalaciones hechas con el instalador comprueban GitHub al abrirse. Cada subida a `main` publica una beta que se ofrece a todos; las etiquetas `vX.Y.Z` publican versiones estables. Si hay una versión nueva, pulsa el botón de descarga de la barra para descargarla y aplicarla. La app verifica el SHA-256 antes de abrir el instalador. La versión portable se actualiza descargando su ejecutable desde GitHub.
 
 La forma recomendada para distribuir KGen View es el instalador `KGenView-Setup-x64.exe`. El instalador no necesita permisos de administrador: se instala en el perfil del usuario y puede registrar las asociaciones de archivos para BMP, JPEG, PNG, GIF, TIFF, ICO, WebP, HEIF/HEIC, SVG, ZIP y CBZ.
 
@@ -132,6 +139,8 @@ Sin una ruta inicial, la aplicación se abre vacía y puedes cargar una imagen m
 
 ### Crear una release
 
+GitHub Actions compila cada push a `main` y publica una beta. Para publicar una versión estable, actualiza `version` en `Cargo.toml`, crea la etiqueta correspondiente (`vX.Y.Z`) y súbela a GitHub. La etiqueta debe coincidir con la versión del proyecto; la publicación incluye el instalador, el ejecutable portable y los hashes SHA-256.
+
 ```powershell
 .\scripts\build-release.ps1
 ```
@@ -150,7 +159,7 @@ La firma requiere `signtool.exe`, incluido en el Windows SDK.
 
 ## Privacidad y red
 
-KGen View no recopila telemetría ni realiza conexiones en segundo plano. La red solo se utiliza cuando se selecciona **Copiar enlace directo (ImgBB)**.
+KGen View no recopila telemetría. En cada inicio, las instalaciones verifican las versiones publicadas en GitHub mediante HTTPS; al descargar una actualización, la app comprueba su SHA-256 antes de abrir el instalador. El actualizador no descarga ni ejecuta un instalador cuyo hash no coincida. Como todavía no hay un certificado Authenticode, el hash comprueba la integridad respecto al manifiesto publicado, pero no autentica por separado al editor. La app también usa la red cuando se selecciona **Copiar enlace directo (ImgBB)**.
 
 Esta función necesita una clave API de ImgBB, que se configura desde **Información de imagen**. Al usarla, el archivo original se envía a `api.imgbb.com` mediante HTTPS y el enlace directo resultante se copia al portapapeles. ImgBB limita la subida a imágenes de hasta 32 MiB.
 

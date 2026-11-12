@@ -29,6 +29,7 @@ pub fn run() -> Result<(), WinError> {
         return Err(WinError::empty());
     }
     let settings = Settings::load();
+    let capture_enabled = settings.capture_enabled;
     let paths = command_line_paths();
     let initial_archive_selection = paths
         .first()
@@ -74,6 +75,23 @@ pub fn run() -> Result<(), WinError> {
         }
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = UpdateWindow(hwnd);
+    }
+    unsafe {
+        state_mut(hwnd).begin_update_check();
+    }
+    if capture_enabled {
+        unsafe {
+            state_mut(hwnd).settings.save();
+        }
+        crate::platform::screenshot::stop_background();
+        if let Err(error) = crate::platform::screenshot::start_background() {
+            unsafe {
+                state_mut(hwnd).settings.capture_enabled = false;
+                state_mut(hwnd).settings.save();
+                state_mut(hwnd).rebuild_menu();
+            }
+            fatal_error(&error);
+        }
     }
     if std::env::args().any(|arg| arg == "--mcp") {
         unsafe {

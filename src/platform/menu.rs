@@ -23,7 +23,8 @@ use windows::{
 use crate::{
     commands as cmd,
     i18n::{Language, Text, tr},
-    platform::text::wide,
+    platform::{screenshot, text::wide},
+    settings::CaptureHotkey,
 };
 
 struct MenuLabel {
@@ -46,6 +47,9 @@ impl ThemedMenu {
         language: Language,
         dark: bool,
         always_on_top: bool,
+        capture_enabled: bool,
+        capture_start_with_windows: bool,
+        capture_hotkey: CaptureHotkey,
     ) -> Result<Self, WinError> {
         let background_color = if dark {
             COLORREF(0x001c1714)
@@ -61,7 +65,15 @@ impl ThemedMenu {
             dark,
             scale: unsafe { GetDpiForWindow(hwnd) }.max(96) as f32 / 96.0,
         };
-        unsafe { menu.build(language, always_on_top)? };
+        unsafe {
+            menu.build(
+                language,
+                always_on_top,
+                capture_enabled,
+                capture_start_with_windows,
+                capture_hotkey,
+            )?
+        };
         Ok(menu)
     }
 
@@ -94,7 +106,14 @@ impl ThemedMenu {
         };
     }
 
-    unsafe fn build(&mut self, language: Language, always_on_top: bool) -> Result<(), WinError> {
+    unsafe fn build(
+        &mut self,
+        language: Language,
+        always_on_top: bool,
+        capture_enabled: bool,
+        capture_start_with_windows: bool,
+        capture_hotkey: CaptureHotkey,
+    ) -> Result<(), WinError> {
         let file = unsafe { CreatePopupMenu()? };
         unsafe {
             self.item(file, cmd::OPEN, tr(language, Text::Open))?;
@@ -168,6 +187,33 @@ impl ThemedMenu {
             let options = CreatePopupMenu()?;
             self.item(options, cmd::LANGUAGE, tr(language, Text::LanguageMenu))?;
             self.item(options, cmd::THEME, tr(language, Text::Theme))?;
+            self.item(
+                options,
+                cmd::CAPTURE_TOGGLE,
+                match (language, capture_enabled) {
+                    (Language::Spanish, true) => "✓ Captura rectangular activada",
+                    (Language::Spanish, false) => "Activar captura rectangular",
+                    (Language::English, true) => "✓ Rectangular capture enabled",
+                    (Language::English, false) => "Enable rectangular capture",
+                },
+            )?;
+            let hotkey_text =
+                screenshot::hotkey_text(capture_hotkey, language == Language::Spanish);
+            let hotkey_label = match language {
+                Language::Spanish => format!("Cambiar atajo de captura ({hotkey_text})..."),
+                Language::English => format!("Change capture shortcut ({hotkey_text})..."),
+            };
+            self.item(options, cmd::CAPTURE_HOTKEY, &hotkey_label)?;
+            self.item(
+                options,
+                cmd::CAPTURE_STARTUP,
+                match (language, capture_start_with_windows) {
+                    (Language::Spanish, true) => "✓ Iniciar capturas con Windows",
+                    (Language::Spanish, false) => "Iniciar capturas con Windows",
+                    (Language::English, true) => "✓ Start capture with Windows",
+                    (Language::English, false) => "Start capture with Windows",
+                },
+            )?;
             self.popup(self.root, options, tr(language, Text::Options))?;
 
             let help = CreatePopupMenu()?;

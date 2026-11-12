@@ -7,6 +7,9 @@ impl AppState {
             self.lang(),
             self.settings.is_dark(),
             self.settings.always_on_top,
+            self.settings.capture_enabled,
+            self.settings.capture_start_with_windows,
+            self.settings.capture_hotkey,
         ) {
             self.menu = Some(menu);
             let _ = unsafe { InvalidateRect(Some(self.hwnd), None, false) };
@@ -61,6 +64,10 @@ impl AppState {
                     self.rebuild_menu();
                 }
             }
+            cmd::CAPTURE_TOGGLE => self.toggle_capture(),
+            cmd::CAPTURE_HOTKEY => self.change_capture_hotkey(),
+            cmd::CAPTURE_STARTUP => self.toggle_capture_startup(),
+            cmd::UPDATE => self.begin_update_install(),
             cmd::EXIT => unsafe {
                 let _ = SendMessageW(self.hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0)));
             },
@@ -120,9 +127,11 @@ impl AppState {
                 }
             }
             cmd::ABOUT => {
-                let text = wide(
-                    "KGen View 1.2.0\n\nVisor nativo para Windows\nRust + WIC + Direct2D\nLicencia MIT\n\nSin telemetría. La red solo se usa al pulsar Copiar enlace (ImgBB).",
+                let about = format!(
+                    "KGen View {}\n\nVisor nativo para Windows\nRust + WIC + Direct2D\nLicencia MIT\n\nSin telemetría. Comprueba actualizaciones en GitHub al iniciar y descarga solo cuando pulsas el botón. Copiar enlace usa ImgBB.",
+                    env!("CARGO_PKG_VERSION")
                 );
+                let text = wide(&about);
                 let caption = wide("KGen View");
                 unsafe {
                     MessageBoxW(
@@ -134,6 +143,109 @@ impl AppState {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn toggle_capture(&mut self) {
+        if self.settings.capture_enabled {
+            crate::platform::screenshot::stop_background();
+            self.settings.capture_enabled = false;
+            self.settings.capture_start_with_windows = false;
+            self.settings.save();
+            unsafe {
+                self.rebuild_menu();
+            }
+            return;
+        }
+
+        self.settings.capture_enabled = true;
+        self.settings.save();
+        match crate::platform::screenshot::start_background() {
+            Ok(()) => unsafe {
+                self.rebuild_menu();
+            },
+            Err(error) => {
+                self.settings.capture_enabled = false;
+                self.settings.capture_start_with_windows = false;
+                self.settings.save();
+                self.show_capture_error(&error);
+            }
+        }
+    }
+
+    fn change_capture_hotkey(&mut self) {
+        let spanish = self.lang() == Language::Spanish;
+        let selected = crate::platform::screenshot::choose_hotkey(
+            self.hwnd,
+            self.settings.capture_hotkey,
+            spanish,
+        );
+        let selected = match selected {
+            Ok(Some(value)) => value,
+            Ok(None) => return,
+            Err(error) => {
+                self.show_capture_error(&error);
+                return;
+            }
+        };
+        if selected == self.settings.capture_hotkey {
+            return;
+        }
+
+        let previous = self.settings.capture_hotkey;
+        if self.settings.capture_enabled {
+            crate::platform::screenshot::stop_background();
+        }
+        self.settings.capture_hotkey = selected;
+        self.settings.save();
+        if self.settings.capture_enabled
+            && let Err(error) = crate::platform::screenshot::start_background()
+        {
+            self.settings.capture_hotkey = previous;
+            self.settings.save();
+            let _ = crate::platform::screenshot::start_background();
+            self.show_capture_error(&error);
+            return;
+        }
+        unsafe {
+            self.rebuild_menu();
+        }
+    }
+
+    fn toggle_capture_startup(&mut self) {
+        if !self.settings.capture_enabled {
+            let text = if self.lang() == Language::Spanish {
+                "Activa primero la captura rectangular para iniciar KGen con Windows."
+            } else {
+                "Enable rectangular capture first to start KGen with Windows."
+            };
+            let text = wide(text);
+            unsafe {
+                let _ = MessageBoxW(
+                    Some(self.hwnd),
+                    PCWSTR(text.as_ptr()),
+                    w!("KGen View"),
+                    MB_OK | MB_ICONINFORMATION,
+                );
+            }
+            return;
+        }
+        self.settings.capture_start_with_windows = !self.settings.capture_start_with_windows;
+        self.settings.save();
+        unsafe {
+            self.rebuild_menu();
+        }
+    }
+
+    fn show_capture_error(&self, error: &str) {
+        let error = wide(error);
+        unsafe {
+            let _ = MessageBoxW(
+                Some(self.hwnd),
+                PCWSTR(error.as_ptr()),
+                w!("KGen View"),
+                MB_OK | MB_ICONERROR,
+            );
         }
     }
 }

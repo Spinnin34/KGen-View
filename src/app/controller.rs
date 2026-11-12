@@ -92,6 +92,7 @@ use crate::{
         properties_dialog::{PropertiesData, PropertiesEdit},
         text::{format_bytes, nul_pos, wide, wide_with_nuls},
         theme::apply_window_theme,
+        updater::{self, UpdateEvent, UpdateInfo},
     },
     settings::{Settings, ThemeMode},
     ui::{Chrome, layout::ChromeLayout, status::StatusModel, theme::Palette},
@@ -115,6 +116,7 @@ const WM_VIEW_DONE: u32 = WM_APP + 5;
 const WM_FILE_DONE: u32 = WM_APP + 6;
 const WM_FOLDER_CHANGED: u32 = WM_APP + 7;
 const WM_MCP_REQUEST: u32 = WM_APP + 8;
+const WM_UPDATE_DONE: u32 = updater::WM_UPDATE_EVENT;
 const TIMER_VIEW: usize = 5;
 const WM_CONVERSION_CLOSED: u32 = crate::platform::conversion_dialog::WM_CONVERSION_CLOSED;
 const TIMER_ANIMATION: usize = 1;
@@ -212,6 +214,9 @@ struct AppState {
     requested_page: usize,
     view_key: Option<ViewKey>,
     upload_result: Arc<Mailbox<UploadPayload>>,
+    update_events: Arc<Mailbox<UpdateEvent>>,
+    update_available: Option<UpdateInfo>,
+    update_download_busy: bool,
     chrome: Chrome,
     status_model: StatusModel,
     menu: Option<ThemedMenu>,

@@ -156,8 +156,11 @@ impl Chrome {
         self.menu.reset_render_resources();
     }
 
-    pub fn label_for_hover(&self, _language: crate::i18n::Language) -> Option<&'static str> {
+    pub fn label_for_hover(&self, language: crate::i18n::Language) -> Option<&'static str> {
         let command = self.toolbar.hovered?;
+        if command == crate::commands::UPDATE {
+            return Some(crate::i18n::tr(language, crate::i18n::Text::DownloadUpdate));
+        }
         toolbar_items()
             .iter()
             .find(|item| item.command == command)

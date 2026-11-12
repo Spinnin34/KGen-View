@@ -320,6 +320,10 @@ pub(super) unsafe extern "system" fn window_proc(
             }
             LRESULT(0)
         }
+        WM_UPDATE_DONE => {
+            state.accept_update_event();
+            LRESULT(0)
+        }
         WM_MCP_REQUEST => {
             let request = state
                 .mcp_requests
@@ -379,6 +383,7 @@ pub(super) unsafe extern "system" fn window_proc(
         WM_DESTROY => {
             state.alive.store(false, Ordering::Release);
             state.upload_result.close();
+            state.update_events.close();
             state.settings.save();
             unsafe {
                 PostQuitMessage(0);

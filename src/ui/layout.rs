@@ -94,7 +94,7 @@ pub struct ChromeLayout {
 }
 
 impl ChromeLayout {
-    pub fn calculate(hwnd: HWND, client: RECT, fullscreen: bool) -> Self {
+    pub fn calculate(hwnd: HWND, client: RECT, fullscreen: bool, update_available: bool) -> Self {
         let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
         let scale = dpi as f32 / 96.0;
         let width = client.right.max(1) as f32;
@@ -163,12 +163,16 @@ impl ChromeLayout {
             let edge = px(EDGE_DIP, scale);
             let mut x = edge;
             let icons_right = width - edge;
+            let visible_items: Vec<_> = toolbar_items()
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.command != crate::commands::UPDATE || update_available)
+                .collect();
             let mut cursor = 0;
-            let items = toolbar_items();
-            while cursor < items.len() {
-                let group = items[cursor].group;
+            while cursor < visible_items.len() {
+                let group = visible_items[cursor].1.group;
                 let start = cursor;
-                while cursor < items.len() && items[cursor].group == group {
+                while cursor < visible_items.len() && visible_items[cursor].1.group == group {
                     cursor += 1;
                 }
                 let group_left = x;
@@ -187,7 +191,7 @@ impl ChromeLayout {
                         break;
                     }
                     placed.push(PlacedToolbarItem {
-                        index,
+                        index: visible_items[index].0,
                         rect: PxRect::new(
                             x,
                             menu_height + 2.0 * scale,

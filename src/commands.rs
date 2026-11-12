@@ -32,3 +32,7 @@ pub const ABOUT: usize = 160;
 pub const COPY_URL: usize = 161;
 pub const CONVERT_IMAGE: usize = 163;
 pub const ALWAYS_ON_TOP: usize = 164;
+pub const CAPTURE_TOGGLE: usize = 165;
+pub const CAPTURE_HOTKEY: usize = 166;
+pub const CAPTURE_STARTUP: usize = 167;
+pub const UPDATE: usize = 168;

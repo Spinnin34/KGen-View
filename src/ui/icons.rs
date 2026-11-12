@@ -13,7 +13,7 @@ use windows::Win32::Graphics::{
 use super::layout::PxRect;
 
 const ICON_SIZE: u32 = 48;
-const ICON_COUNT: u32 = 10;
+const ICON_COUNT: u32 = 11;
 const ATLAS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/toolbar-atlas.bgra"));
 
 #[derive(Clone, Copy)]
@@ -28,6 +28,7 @@ pub enum Icon {
     RotateLeft = 7,
     RotateRight = 8,
     Fullscreen = 9,
+    Download = 10,
 }
 
 pub unsafe fn create_atlas(target: &ID2D1HwndRenderTarget) -> windows::core::Result<ID2D1Bitmap> {
