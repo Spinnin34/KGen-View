@@ -184,14 +184,14 @@ impl ChromeLayout {
                     toolbar.bottom - 3.0 * scale,
                 );
                 let mut group_fits = true;
-                for index in start..cursor {
+                for (index, _) in visible_items.iter().take(cursor).skip(start) {
                     let right = x + button;
                     if right > icons_right {
                         group_fits = false;
                         break;
                     }
                     placed.push(PlacedToolbarItem {
-                        index: visible_items[index].0,
+                        index: *index,
                         rect: PxRect::new(
                             x,
                             menu_height + 2.0 * scale,

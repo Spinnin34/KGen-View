@@ -33,6 +33,7 @@ use windows::{
         Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT},
         System::{
             Com::CoTaskMemFree,
+            Diagnostics::Debug::MessageBeep,
             LibraryLoader::GetModuleHandleW,
             SystemInformation::GetSystemTime,
             Time::SystemTimeToTzSpecificLocalTime,
@@ -54,13 +55,13 @@ use windows::{
                 CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
                 DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW,
                 GetSystemMetrics, GetWindowLongPtrW, HMENU, IDC_ARROW, IDC_CROSS, IsDialogMessageW,
-                KillTimer, LoadCursorW, MSG, MessageBoxW, PostQuitMessage, RegisterClassExW,
-                SWP_SHOWWINDOW, SetForegroundWindow, SetLayeredWindowAttributes, SetTimer,
-                SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WINDOW_EX_STYLE,
-                WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN,
-                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_PAINT, WM_TIMER,
-                WS_CAPTION, WS_CHILD, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU,
-                WS_TABSTOP, WS_VISIBLE,
+                KillTimer, LoadCursorW, MB_ICONASTERISK, MSG, MessageBoxW, PostQuitMessage,
+                RegisterClassExW, SWP_SHOWWINDOW, SetForegroundWindow, SetLayeredWindowAttributes,
+                SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
+                WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND,
+                WM_HOTKEY, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+                WM_PAINT, WM_TIMER, WS_CAPTION, WS_CHILD, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+                WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
             },
         },
     },
@@ -279,10 +280,10 @@ fn register_window_class(
         lpszClassName: name,
         ..Default::default()
     };
-    if unsafe { RegisterClassExW(&class) } == 0 {
-        if unsafe { GetLastError() } != ERROR_CLASS_ALREADY_EXISTS {
-            return Err("No se pudo registrar la ventana de captura.".into());
-        }
+    if unsafe { RegisterClassExW(&class) } == 0
+        && unsafe { GetLastError() } != ERROR_CLASS_ALREADY_EXISTS
+    {
+        return Err("No se pudo registrar la ventana de captura.".into());
     }
     Ok(())
 }
@@ -629,7 +630,7 @@ fn update_overlay_selection(hwnd: HWND, state: &OverlayState, previous_end: Opti
                     }
                 }
             }
-            if SetWindowRgn(hwnd, Some(region), false) == 0 {
+            if SetWindowRgn(hwnd, Some(region), true) == 0 {
                 let _ = DeleteObject(HGDIOBJ(region.0));
             }
         }
@@ -880,14 +881,14 @@ fn capture_bgra(rect: RECT) -> Result<Vec<u8>, String> {
             return Err("No se pudo leer la imagen de la pantalla.".into());
         }
     }
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel[3] = 255;
     }
     Ok(pixels)
 }
 
 fn save_png(path: &PathBuf, width: u32, height: u32, bgra: &mut [u8]) -> Result<(), String> {
-    for pixel in bgra.chunks_exact_mut(4) {
+    for pixel in bgra.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     let result = (|| {
@@ -908,7 +909,7 @@ fn save_png(path: &PathBuf, width: u32, height: u32, bgra: &mut [u8]) -> Result<
             .write_image_data(bgra)
             .map_err(|error| format!("No se pudo guardar la captura: {error}"))
     })();
-    for pixel in bgra.chunks_exact_mut(4) {
+    for pixel in bgra.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     result
@@ -916,7 +917,7 @@ fn save_png(path: &PathBuf, width: u32, height: u32, bgra: &mut [u8]) -> Result<
 
 fn notify_capture(spanish: bool) {
     if unsafe { RoInitialize(RO_INIT_MULTITHREADED) }.is_err() {
-        play_capture_fallback_sound();
+        play_capture_sound();
         return;
     }
     let notification = (|| {
@@ -929,7 +930,7 @@ fn notify_capture(spanish: bool) {
             ("Screenshot saved", "Copied to clipboard · Pictures\\KGen")
         };
         let xml = format!(
-            "<toast><visual><binding template=\"ToastGeneric\"><text>{title}</text><text>{body}</text></binding></visual><audio src=\"ms-winsoundevent:Notification.Default\"/></toast>"
+            "<toast><visual><binding template=\"ToastGeneric\"><text>{title}</text><text>{body}</text></binding></visual></toast>"
         );
         let document = XmlDocument::new()?;
         document.LoadXml(&windows::core::HSTRING::from(xml))?;
@@ -938,19 +939,20 @@ fn notify_capture(spanish: bool) {
         ToastNotificationManager::CreateToastNotifierWithId(&app_id)?.Show(&toast)
     })();
     unsafe { RoUninitialize() };
-    if notification.is_err() {
-        play_capture_fallback_sound();
-    }
+    play_capture_sound();
     let _ = notification;
 }
 
-fn play_capture_fallback_sound() {
+fn play_capture_sound() {
     unsafe {
-        let _ = PlaySoundW(
+        let played = PlaySoundW(
             w!("SystemAsterisk"),
             None,
             SND_ALIAS | SND_ASYNC | SND_NODEFAULT,
         );
+        if !played.as_bool() {
+            let _ = MessageBeep(MB_ICONASTERISK);
+        }
     }
 }
 
@@ -1135,7 +1137,7 @@ pub fn choose_hotkey(
 
     let mut message = MSG::default();
     while !state.done && unsafe { GetMessageW(&mut message, None, 0, 0) }.as_bool() {
-        if unsafe { IsDialogMessageW(dialog, &mut message) }.as_bool() {
+        if unsafe { IsDialogMessageW(dialog, &message) }.as_bool() {
             continue;
         }
         unsafe {
@@ -1280,7 +1282,7 @@ unsafe extern "system" fn hotkey_dialog_proc(
                     80,
                     30,
                     Some(hwnd),
-                    Some(HMENU(1usize as *mut c_void)),
+                    Some(HMENU(std::ptr::with_exposed_provenance_mut::<c_void>(1))),
                     Some(instance),
                     None,
                 )
@@ -1296,7 +1298,7 @@ unsafe extern "system" fn hotkey_dialog_proc(
                     83,
                     30,
                     Some(hwnd),
-                    Some(HMENU(2usize as *mut c_void)),
+                    Some(HMENU(std::ptr::with_exposed_provenance_mut::<c_void>(2))),
                     Some(instance),
                     None,
                 )
