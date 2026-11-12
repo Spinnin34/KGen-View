@@ -165,7 +165,14 @@ impl AppState {
             self.archive_fallback = None;
         }
         match result {
-            Ok(document) => {
+            Ok(mut document) => {
+                // The decoder canonicalizes file paths for I/O. Keep the
+                // archive session's exact member path as the document identity
+                // so navigation, restart registration and ZIP metadata keep
+                // resolving to the active member on Windows.
+                if self.active_archive.is_some() {
+                    document.path = path.clone();
+                }
                 if self.load_started.is_some() {
                     self.first_visible = self.load_started;
                 }

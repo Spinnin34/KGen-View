@@ -5,7 +5,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc, Condvar, Mutex, OnceLock, Weak,
+        Arc, Condvar, Mutex, MutexGuard, OnceLock, TryLockError, Weak,
         atomic::{AtomicU64, Ordering},
     },
     time::SystemTime,
@@ -50,6 +50,7 @@ pub(super) struct ArchiveSession {
     source_stamp: ArchiveStamp,
     members: Vec<ArchiveMember>,
     positions: HashMap<PathBuf, usize>,
+    names: HashMap<String, usize>,
 }
 
 #[derive(Debug)]
@@ -99,7 +100,7 @@ impl ArchiveSession {
             ));
         }
 
-        let mut entries = Vec::new();
+        let mut entries = Vec::with_capacity(archive.len().min(MAX_ARCHIVE_IMAGES));
         for index in 0..archive.len() {
             if should_cancel() {
                 return Err(ImageError("Carga cancelada.".into()));
@@ -110,12 +111,18 @@ impl ArchiveSession {
             if file.is_dir() {
                 continue;
             }
+            // Most archives also contain metadata, thumbnails and text files.
+            // Check the borrowed name first so those entries do not allocate an
+            // enclosed path or a normalized String during indexing.
+            let Ok(raw_name) = file.name() else {
+                continue;
+            };
+            if !is_supported(Path::new(raw_name.as_ref())) {
+                continue;
+            }
             let Some(member_path) = file.enclosed_name() else {
                 continue;
             };
-            if !is_supported(&member_path) {
-                continue;
-            }
             let Some(extension) = member_path.extension().and_then(|value| value.to_str()) else {
                 continue;
             };
@@ -125,19 +132,15 @@ impl ArchiveSession {
                 extension: extension.to_ascii_lowercase(),
                 size: file.size(),
             });
+            if entries.len() > MAX_ARCHIVE_IMAGES {
+                return Err(too_many_archive_images_error(language));
+            }
         }
-        entries.sort_by(|left, right| {
+        entries.sort_unstable_by(|left, right| {
             natural_cmp(&left.name, &right.name).then_with(|| left.index.cmp(&right.index))
         });
         if archive_stamp(source_path).map_err(ImageError::from)? != source_stamp {
             return Err(archive_changed_error(language));
-        }
-        if entries.len() > MAX_ARCHIVE_IMAGES {
-            return Err(localized_error(
-                language,
-                "El ZIP contiene demasiadas imágenes para abrirlo de una vez.",
-                "The ZIP archive contains too many images to open at once.",
-            ));
         }
         if entries.is_empty() {
             return Err(no_images_error(language));
@@ -162,17 +165,21 @@ impl ArchiveSession {
             .collect();
 
         let members: Vec<ArchiveMember> = members;
-        let positions = members
-            .iter()
-            .enumerate()
-            .map(|(i, m)| (m.path.clone(), i))
-            .collect();
+        let mut positions = HashMap::with_capacity(members.len());
+        let mut names = HashMap::with_capacity(members.len());
+        for (index, member) in members.iter().enumerate() {
+            positions.insert(member.path.clone(), index);
+            names
+                .entry(member.name.to_ascii_lowercase())
+                .or_insert(index);
+        }
         Ok(Self {
             source_path: source_path.to_path_buf(),
             storage,
             source_stamp,
             members,
             positions,
+            names,
         })
     }
 
@@ -236,11 +243,10 @@ impl ArchiveSession {
     }
 
     pub fn member_ref_by_name(&self, name: &str) -> Option<ArchiveMemberRef> {
-        let normalized_name = name.replace('\\', "/");
-        self.members
-            .iter()
-            .find(|member| member.name.eq_ignore_ascii_case(&normalized_name))
-            .map(|member| self.make_member_ref(member))
+        let normalized_name = name.replace('\\', "/").to_ascii_lowercase();
+        self.names
+            .get(&normalized_name)
+            .map(|&index| self.make_member_ref(&self.members[index]))
     }
 
     pub fn contains_path(&self, path: &Path) -> bool {
@@ -301,10 +307,7 @@ impl ArchiveMemberRef {
         language: Language,
     ) -> ImageResult<()> {
         let _span = crate::diagnostics::Span::new("archive_extract");
-        let _guard = self
-            .extraction_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = self.extraction_guard(should_cancel)?;
         if should_cancel() {
             return Err(ImageError("Carga cancelada.".into()));
         }
@@ -329,6 +332,24 @@ impl ArchiveMemberRef {
             return Err(error);
         }
         fs::rename(&partial_path, &self.path).map_err(ImageError::from)
+    }
+
+    fn extraction_guard<'a>(
+        &'a self,
+        should_cancel: &impl Fn() -> bool,
+    ) -> ImageResult<MutexGuard<'a, ()>> {
+        loop {
+            if should_cancel() {
+                return Err(ImageError("Carga cancelada.".into()));
+            }
+            match self.extraction_lock.try_lock() {
+                Ok(guard) => return Ok(guard),
+                Err(TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
+                Err(TryLockError::WouldBlock) => {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            }
+        }
     }
 
     fn extract_to_partial(
@@ -540,6 +561,14 @@ fn no_images_error(language: Language) -> ImageError {
         language,
         "No se encontraron imágenes compatibles dentro del ZIP.",
         "No supported images were found inside the ZIP archive.",
+    )
+}
+
+fn too_many_archive_images_error(language: Language) -> ImageError {
+    localized_error(
+        language,
+        "El ZIP contiene demasiadas imágenes para abrirlo de una vez.",
+        "The ZIP archive contains too many images to open at once.",
     )
 }
 
