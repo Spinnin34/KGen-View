@@ -25,10 +25,11 @@ use windows::{
         Graphics::Gdi::{
             BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLACK_BRUSH, BeginPaint, BitBlt, CAPTUREBLT,
             CombineRgn, CreateCompatibleBitmap, CreateCompatibleDC, CreatePen, CreateRectRgn,
-            CreateSolidBrush, DIB_RGB_COLORS, DeleteDC, DeleteObject, EndPaint, FillRect, GetDC,
-            GetDIBits, GetStockObject, HDC, HGDIOBJ, HOLLOW_BRUSH, InvalidateRect, PAINTSTRUCT,
-            PS_SOLID, RGN_DIFF, RGN_ERROR, Rectangle, ReleaseDC, RoundRect, SRCCOPY, SelectObject,
-            SetBkMode, SetTextColor, SetWindowRgn, TRANSPARENT, UpdateWindow, WHITE_PEN,
+            CreateSolidBrush, DIB_RGB_COLORS, DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteDC,
+            DeleteObject, DrawTextW, EndPaint, FillRect, GetDC, GetDIBits, GetStockObject, HBRUSH,
+            HDC, HGDIOBJ, HOLLOW_BRUSH, HPEN, InvalidateRect, PAINTSTRUCT, PS_SOLID, RGN_DIFF,
+            RGN_ERROR, Rectangle, ReleaseDC, RoundRect, SRCCOPY, SelectObject, SetBkMode,
+            SetTextColor, SetWindowRgn, TRANSPARENT, UpdateWindow, WHITE_PEN,
         },
         Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT},
         System::{
@@ -94,12 +95,27 @@ struct HostState {
 
 struct OverlayState {
     desktop: RECT,
+    hint_brush: HBRUSH,
+    hint_border_pen: HPEN,
     start: Option<POINT>,
     end: POINT,
     rendered_end: Option<POINT>,
     redraw_timer_active: bool,
     cancelled: bool,
     hint: Vec<u16>,
+}
+
+impl Drop for OverlayState {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.hint_brush.0.is_null() {
+                let _ = DeleteObject(HGDIOBJ(self.hint_brush.0));
+            }
+            if !self.hint_border_pen.0.is_null() {
+                let _ = DeleteObject(HGDIOBJ(self.hint_border_pen.0));
+            }
+        }
+    }
 }
 
 struct HotkeyDialogState {
@@ -383,7 +399,7 @@ unsafe extern "system" fn overlay_window_proc(
                 );
             }
             if !state.is_null() {
-                let state = unsafe { &*state };
+                let state = unsafe { &mut *state };
                 if let (Some(start), Some(end)) = (state.start, state.rendered_end) {
                     let left = start.x.min(end.x) - state.desktop.left;
                     let top = start.y.min(end.y) - state.desktop.top;
@@ -391,17 +407,16 @@ unsafe extern "system" fn overlay_window_proc(
                     let bottom = start.y.max(end.y) - state.desktop.top;
                     draw_selection_frame(hdc, left, top, right, bottom);
                 }
-                let hint_right =
-                    24 + ((state.hint.len() as i32).saturating_mul(8) + 44).clamp(280, 470);
+                let chip = hint_chip_rect(&state.hint, state.desktop.right - state.desktop.left);
                 let clip = paint.rcPaint;
-                let hint_visible =
-                    clip.left < hint_right && clip.right > 24 && clip.top < 66 && clip.bottom > 22;
+                let hint_visible = clip.left < chip.right
+                    && clip.right > chip.left
+                    && clip.top < chip.bottom
+                    && clip.bottom > chip.top;
                 if hint_visible {
-                    unsafe {
-                        let _ = SetBkMode(hdc, TRANSPARENT);
-                        let _ = SetTextColor(hdc, COLORREF(0x00ffffff));
-                    }
-                    draw_hint_chip(hdc, &state.hint);
+                    let fill = state.hint_brush;
+                    let border = state.hint_border_pen;
+                    draw_hint_chip(hdc, &mut state.hint, chip, fill, border);
                 }
             }
             unsafe {
@@ -563,44 +578,50 @@ fn draw_selection_frame(hdc: HDC, left: i32, top: i32, right: i32, bottom: i32) 
     }
 }
 
-fn draw_hint_chip(hdc: HDC, hint: &[u16]) {
-    let width = ((hint.len() as i32).saturating_mul(8) + 44).clamp(280, 470);
-    let chip = RECT {
-        left: 24,
+fn hint_chip_rect(hint: &[u16], screen_width: i32) -> RECT {
+    let max_width = (screen_width - 32).clamp(1, 470);
+    let min_width = 280.min(max_width);
+    let width = ((hint.len() as i32).saturating_mul(8) + 44).clamp(min_width, max_width);
+    let left = ((screen_width - width) / 2).max(0);
+    RECT {
+        left,
         top: 22,
-        right: 24 + width,
+        right: left + width,
         bottom: 66,
-    };
+    }
+}
+
+fn draw_hint_chip(hdc: HDC, hint: &mut [u16], chip: RECT, fill: HBRUSH, border: HPEN) {
     unsafe {
-        let fill = CreateSolidBrush(COLORREF(0x0028201b));
-        let border = CreatePen(PS_SOLID, 1, COLORREF(0x00625247));
-        if !fill.0.is_null() && !border.0.is_null() {
-            let old_fill = SelectObject(hdc, HGDIOBJ(fill.0));
-            let old_border = SelectObject(hdc, HGDIOBJ(border.0));
-            let _ = RoundRect(hdc, chip.left, chip.top, chip.right, chip.bottom, 16, 16);
-            let _ = SelectObject(hdc, old_border);
-            let _ = SelectObject(hdc, old_fill);
-        }
-        if !fill.0.is_null() {
-            let _ = DeleteObject(HGDIOBJ(fill.0));
-        }
-        let accent_brush = CreateSolidBrush(COLORREF(0x00f3c837));
-        if !accent_brush.0.is_null() {
-            let accent = RECT {
-                left: chip.left + 1,
-                top: chip.top + 12,
-                right: chip.left + 4,
-                bottom: chip.bottom - 12,
-            };
-            let _ = FillRect(hdc, &accent, accent_brush);
-            let _ = DeleteObject(HGDIOBJ(accent_brush.0));
-        }
-        if !border.0.is_null() {
-            let _ = DeleteObject(HGDIOBJ(border.0));
-        }
+        let fill = if fill.0.is_null() {
+            GetStockObject(BLACK_BRUSH)
+        } else {
+            HGDIOBJ(fill.0)
+        };
+        let border = if border.0.is_null() {
+            GetStockObject(WHITE_PEN)
+        } else {
+            HGDIOBJ(border.0)
+        };
+        let old_fill = SelectObject(hdc, fill);
+        let old_border = SelectObject(hdc, border);
+        let _ = RoundRect(hdc, chip.left, chip.top, chip.right, chip.bottom, 14, 14);
+        let _ = SelectObject(hdc, old_border);
+        let _ = SelectObject(hdc, old_fill);
         let _ = SetBkMode(hdc, TRANSPARENT);
-        let _ = SetTextColor(hdc, COLORREF(0x00ffffff));
-        let _ = windows::Win32::Graphics::Gdi::TextOutW(hdc, chip.left + 16, chip.top + 15, hint);
+        let _ = SetTextColor(hdc, COLORREF(0x002A8CFF));
+        let mut text_rect = RECT {
+            left: chip.left + 14,
+            top: chip.top + 5,
+            right: chip.right - 14,
+            bottom: chip.bottom - 5,
+        };
+        let _ = DrawTextW(
+            hdc,
+            hint,
+            &mut text_rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
     }
 }
 
@@ -705,6 +726,8 @@ fn select_and_capture(owner: HWND, spanish: bool) -> Result<(), String> {
     }
     let mut state = OverlayState {
         desktop,
+        hint_brush: unsafe { CreateSolidBrush(COLORREF(0x00181410)) },
+        hint_border_pen: unsafe { CreatePen(PS_SOLID, 1, COLORREF(0x002D76EA)) },
         start: None,
         end: POINT::default(),
         rendered_end: None,
