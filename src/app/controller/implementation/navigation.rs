@@ -15,6 +15,56 @@ impl AppState {
             .unwrap_or_else(|| display_path(path))
     }
 
+    pub(super) fn image_position(&self) -> Option<(usize, usize)> {
+        if let Some(index) = self.active_archive {
+            let archive = self.archive_sessions.get(index)?;
+            let cursor = self.archive_cursor?;
+            return (cursor < archive.member_count())
+                .then_some((cursor + 1, archive.member_count()));
+        }
+        self.catalog
+            .index
+            .map(|index| (index + 1, self.catalog.files.len()))
+    }
+
+    pub(super) fn adjacent_image_path(&self, offset: isize) -> Option<PathBuf> {
+        if let Some(index) = self.active_archive {
+            let archive = self.archive_sessions.get(index)?;
+            return archive.member_path_adjacent(self.archive_cursor?, offset);
+        }
+        self.catalog.adjacent_wrapped(offset)
+    }
+
+    pub(super) fn edge_image_path(&self, first: bool) -> Option<PathBuf> {
+        if let Some(index) = self.active_archive {
+            let archive = self.archive_sessions.get(index)?;
+            return if first {
+                archive.first_member_path()
+            } else {
+                archive.last_member_path()
+            };
+        }
+        if first {
+            self.catalog.first()
+        } else {
+            self.catalog.last()
+        }
+    }
+
+    pub(super) fn next_unfailed_image_path(&self, direction: isize) -> Option<PathBuf> {
+        if let Some(index) = self.active_archive {
+            let archive = self.archive_sessions.get(index)?;
+            return archive.next_member_path_skipping(self.archive_cursor?, direction, |path| {
+                self.failed_paths.contains(path)
+            });
+        }
+        (1..=self.catalog.files.len()).find_map(|offset| {
+            self.catalog
+                .adjacent_wrapped(direction.signum().saturating_mul(offset as isize))
+                .filter(|candidate| !self.failed_paths.contains(candidate))
+        })
+    }
+
     pub(super) fn accept_catalog(&mut self, payload: CatalogPayload) {
         if payload.generation != self.generation {
             return;
@@ -177,18 +227,14 @@ impl AppState {
     }
 
     pub(super) fn navigate(&mut self, offset: isize) {
-        if let Some(path) = self.catalog.adjacent_wrapped(offset) {
+        if let Some(path) = self.adjacent_image_path(offset) {
             self.prefetch_enabled = true;
             self.navigation_direction = offset.signum();
             self.request_leave(PendingAction::Load(path));
         }
     }
     pub(super) fn navigate_edge(&mut self, first: bool) {
-        let path = if first {
-            self.catalog.first()
-        } else {
-            self.catalog.last()
-        };
+        let path = self.edge_image_path(first);
         if let Some(path) = path {
             self.prefetch_enabled = true;
             self.navigation_direction = if first { 1 } else { -1 };

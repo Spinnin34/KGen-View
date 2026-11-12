@@ -56,9 +56,12 @@ Para observar la aplicación completa desde una consola con captura de salida:
 ```powershell
 $env:KGEN_PERF = '1'
 .\target\release\kgen-view.exe C:\imagenes\foto.jpg 2> target\viewer-perf.log
+Remove-Item Env:\KGEN_PERF
 ```
 
-El diagnóstico es local y optativo. Registra etapas y consumo reservado, sin rutas ni metadatos de las imágenes. `first_visible` se registra tras completar el primer dibujo de la nueva imagen; también se registran decodificación, reducción nativa, copia de píxeles, subida a GPU y exportación.
+El diagnóstico es local y optativo. Registra etapas y consumo reservado, sin rutas ni metadatos de las imágenes. `archive_index` y `archive_extract` miden el indexado del ZIP y la extracción de cada miembro; `first_visible` se registra tras completar el primer dibujo de la nueva imagen. También se registran decodificación, reducción nativa, copia de píxeles, subida a GPU y exportación.
+
+Para medir apertura y navegación de un archivo, repite la captura con un `.zip` o `.cbz` representativo y compara `archive_index`, `archive_extract`, `decode` y `first_visible` entre ejecuciones.
 
 ## Calidad y aceptación
 

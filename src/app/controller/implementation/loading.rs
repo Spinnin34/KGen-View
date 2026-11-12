@@ -15,13 +15,20 @@ impl AppState {
         initial_archive_member: Option<String>,
     ) {
         let opening_archive = archive::is_archive_path(&path);
+        let known_archive = if opening_archive {
+            None
+        } else {
+            self.archive_sessions
+                .iter()
+                .position(|archive| archive.contains_path(&path))
+        };
         if !opening_archive && self.catalog.contains(&path) {
             self.catalog.update_index(&path);
         }
         // Catalog entries have already been normalized by the initial scan.
-        // External paths still need canonicalization, even when a catalog is
-        // present for a different folder.
-        let path = if self.catalog.contains(&path) {
+        // Archive member paths are session identities; canonicalizing them can
+        // change their spelling and break that identity on Windows.
+        let path = if known_archive.is_some() || self.catalog.contains(&path) {
             path
         } else {
             path.canonicalize().unwrap_or(path)
@@ -40,17 +47,20 @@ impl AppState {
 
         if opening_archive {
             if self.archive_fallback.is_none() {
-                self.archive_fallback = Some((
-                    self.catalog.clone(),
-                    self.active_archive,
-                    self.catalog_stamp,
-                ));
+                self.archive_fallback = Some(ArchiveFallback {
+                    catalog: self.catalog.clone(),
+                    active_archive: self.active_archive,
+                    archive_cursor: self.archive_cursor,
+                    catalog_stamp: self.catalog_stamp,
+                });
             }
         } else {
-            self.active_archive = self
-                .archive_sessions
-                .iter()
-                .position(|archive| archive.contains_path(&path));
+            self.active_archive = known_archive;
+            self.archive_cursor = self.active_archive.and_then(|index| {
+                self.archive_sessions
+                    .get(index)
+                    .and_then(|archive| archive.member_index(&path))
+            });
             if self.active_archive.is_none() {
                 self.archive_fallback = None;
             }
@@ -63,9 +73,13 @@ impl AppState {
                 .and_then(|archive| archive.member_ref(&path))
         };
 
+        let is_archive_member = self.active_archive.is_some();
         let is_same_folder =
             self.catalog.files.first().and_then(|known| known.parent()) == path.parent();
-        if !opening_archive && (self.catalog.files.is_empty() || !is_same_folder) {
+        if !opening_archive
+            && !is_archive_member
+            && (self.catalog.files.is_empty() || !is_same_folder)
+        {
             self.pending_catalog = Some((generation, path.clone()));
             self.catalog_loader
                 .submit(generation, path.clone(), self.hwnd);
@@ -137,19 +151,18 @@ impl AppState {
         } else {
             None
         };
+        self.active_archive = loaded_archive_index.or_else(|| {
+            self.archive_sessions
+                .iter()
+                .position(|archive| archive.contains_path(&path))
+        });
+        self.archive_cursor = self.active_archive.and_then(|index| {
+            self.archive_sessions
+                .get(index)
+                .and_then(|archive| archive.member_index(&path))
+        });
         if result.is_ok() {
-            self.active_archive = loaded_archive_index.or_else(|| {
-                self.archive_sessions
-                    .iter()
-                    .position(|archive| archive.contains_path(&path))
-            });
             self.archive_fallback = None;
-        } else if loaded_archive_index.is_none() {
-            self.active_archive = self.document.as_ref().and_then(|document| {
-                self.archive_sessions
-                    .iter()
-                    .position(|archive| archive.contains_path(&document.path))
-            });
         }
         match result {
             Ok(document) => {
@@ -163,20 +176,28 @@ impl AppState {
                         .map(|started| started.elapsed().as_millis())
                         .unwrap_or(0);
                 }
-                let is_same_folder =
-                    self.catalog.files.first().and_then(|p| p.parent()) == path.parent();
-                let needs_catalog = catalog.files.is_empty() && !is_same_folder;
-                if catalog.files.is_empty() || is_same_folder {
-                    if is_same_folder {
-                        self.catalog.update_index(&path);
-                    } else {
-                        self.catalog = FolderCatalog::default();
-                        self.catalog_stamp = None;
-                    }
+                let is_archive_member = self.active_archive.is_some();
+                let needs_catalog = if is_archive_member {
+                    self.catalog = FolderCatalog::default();
+                    self.catalog_stamp = None;
+                    false
                 } else {
-                    self.catalog = catalog;
-                    self.catalog_stamp = folder_modified(&path);
-                }
+                    let is_same_folder =
+                        self.catalog.files.first().and_then(|p| p.parent()) == path.parent();
+                    let needs_catalog = catalog.files.is_empty() && !is_same_folder;
+                    if catalog.files.is_empty() || is_same_folder {
+                        if is_same_folder {
+                            self.catalog.update_index(&path);
+                        } else {
+                            self.catalog = FolderCatalog::default();
+                            self.catalog_stamp = None;
+                        }
+                    } else {
+                        self.catalog = catalog;
+                        self.catalog_stamp = folder_modified(&path);
+                    }
+                    needs_catalog
+                };
                 self.failed_paths.remove(&path);
                 self.active_path = Some(path.clone());
                 let (width, height) = document.view_dimensions();
@@ -190,10 +211,12 @@ impl AppState {
                 } else {
                     path.parent().map(Path::to_path_buf)
                 });
-                if self.folder_dirty {
+                if self.folder_dirty && !is_archive_member {
                     self.folder_dirty = false;
                     self.catalog_loader
                         .submit(self.generation, path.clone(), self.hwnd);
+                } else if is_archive_member {
+                    self.folder_dirty = false;
                 }
                 self.zoom_mode = ZoomMode::Fit;
                 self.crop_selection = None;
@@ -224,25 +247,37 @@ impl AppState {
                     self.load_time_ms = started.elapsed().as_millis();
                 }
                 if archive_open_error {
-                    if let Some((catalog, active_archive, catalog_stamp)) =
-                        self.archive_fallback.take()
-                    {
-                        self.catalog = catalog;
-                        self.active_archive = active_archive;
-                        self.catalog_stamp = catalog_stamp;
-                    }
+                    self.restore_archive_fallback();
                     self.update_title();
                     self.update_status(None);
                     self.show_error(&error.to_string());
                     return;
                 }
-                let is_same_folder =
-                    self.catalog.files.first().and_then(|p| p.parent()) == path.parent();
-                if catalog.files.is_empty() && is_same_folder {
-                    self.catalog.update_index(&path);
+                let archive_source_changed = self
+                    .active_archive
+                    .and_then(|index| self.archive_sessions.get(index))
+                    .is_some_and(|archive| !archive.source_is_current());
+                if archive_source_changed {
+                    self.restore_archive_fallback();
+                    self.update_title();
+                    self.update_status(None);
+                    self.show_error(&error.to_string());
+                    return;
+                }
+                if self.active_archive.is_some() {
+                    // A ZIP member is never a file in the temporary extraction
+                    // directory for navigation or folder-catalog purposes.
+                    self.catalog = FolderCatalog::default();
+                    self.catalog_stamp = None;
                 } else {
-                    self.catalog = catalog;
-                    self.catalog_stamp = folder_modified(&path);
+                    let is_same_folder =
+                        self.catalog.files.first().and_then(|p| p.parent()) == path.parent();
+                    if catalog.files.is_empty() && is_same_folder {
+                        self.catalog.update_index(&path);
+                    } else {
+                        self.catalog = catalog;
+                        self.catalog_stamp = folder_modified(&path);
+                    }
                 }
                 self.failed_paths.insert(path.clone());
                 let extension = path
@@ -255,11 +290,7 @@ impl AppState {
                 } else {
                     String::new()
                 };
-                let next = (1..=self.catalog.files.len()).find_map(|offset| {
-                    self.catalog
-                        .adjacent_wrapped(offset as isize)
-                        .filter(|candidate| !self.failed_paths.contains(candidate))
-                });
+                let next = self.next_unfailed_image_path(self.navigation_direction);
                 if let Some(next) = next {
                     self.update_status(Some(if self.lang() == Language::Spanish {
                         "Imagen dañada o incompatible; pasando a la siguiente…"
@@ -268,13 +299,8 @@ impl AppState {
                     }));
                     self.start_load(next);
                 } else {
-                    if let Some((catalog, active_archive, catalog_stamp)) =
-                        self.archive_fallback.take()
-                    {
-                        self.catalog = catalog;
-                        self.active_archive = active_archive;
-                        self.catalog_stamp = catalog_stamp;
-                    }
+                    self.restore_archive_fallback();
+                    self.update_title();
                     self.update_status(Some(tr(self.lang(), Text::Unsupported)));
                     self.show_error(&format!("{}{}", error, suffix));
                 }
@@ -289,10 +315,9 @@ impl AppState {
         // Keep one bounded adjacent image ready so normal navigation is warm
         // from the first open; speculative work runs on its own worker.
         let offset = if self.navigation_direction < 0 { -1 } else { 1 };
-        let offsets = [offset];
-        let candidates: Vec<DecodeTarget> = offsets
+        let candidates: Vec<DecodeTarget> = [offset]
             .into_iter()
-            .filter_map(|offset| self.catalog.adjacent_wrapped(offset))
+            .filter_map(|offset| self.adjacent_image_path(offset))
             .filter(|path| self.active_path.as_ref() != Some(path))
             .filter(|path| !self.cache.iter().any(|(cached, _)| cached == path))
             .filter_map(|path| {
@@ -336,9 +361,21 @@ impl AppState {
             } else {
                 self.archive_sessions.clear();
                 self.active_archive = None;
+                self.archive_cursor = None;
             }
         } else {
             self.archive_sessions.clear();
+            self.archive_cursor = None;
+        }
+    }
+
+    fn restore_archive_fallback(&mut self) {
+        if let Some(fallback) = self.archive_fallback.take() {
+            self.catalog = fallback.catalog;
+            self.active_archive = fallback.active_archive;
+            self.archive_cursor = fallback.archive_cursor;
+            self.catalog_stamp = fallback.catalog_stamp;
+            self.retain_active_archive_session();
         }
     }
 

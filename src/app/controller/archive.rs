@@ -83,6 +83,7 @@ impl ArchiveSession {
         should_cancel: &impl Fn() -> bool,
         language: Language,
     ) -> ImageResult<Self> {
+        let _span = crate::diagnostics::Span::new("archive_index");
         if should_cancel() {
             return Err(ImageError("Carga cancelada.".into()));
         }
@@ -179,11 +180,53 @@ impl ArchiveSession {
         &self.source_path
     }
 
-    pub fn image_paths(&self) -> Vec<PathBuf> {
-        self.members
-            .iter()
-            .map(|member| member.path.clone())
-            .collect()
+    pub fn source_is_current(&self) -> bool {
+        archive_stamp(&self.source_path).is_ok_and(|stamp| stamp == self.source_stamp)
+    }
+
+    pub fn member_count(&self) -> usize {
+        self.members.len()
+    }
+
+    pub fn member_index(&self, path: &Path) -> Option<usize> {
+        self.positions.get(path).copied()
+    }
+
+    pub fn member_path_at(&self, index: usize) -> Option<PathBuf> {
+        self.members.get(index).map(|member| member.path.clone())
+    }
+
+    pub fn member_path_adjacent(&self, index: usize, offset: isize) -> Option<PathBuf> {
+        if self.members.is_empty() {
+            return None;
+        }
+        let next = (index as isize + offset).rem_euclid(self.members.len() as isize) as usize;
+        self.member_path_at(next)
+    }
+
+    pub fn first_member_path(&self) -> Option<PathBuf> {
+        self.member_path_at(0)
+    }
+
+    pub fn last_member_path(&self) -> Option<PathBuf> {
+        self.member_path_at(self.members.len().checked_sub(1)?)
+    }
+
+    pub fn next_member_path_skipping(
+        &self,
+        index: usize,
+        direction: isize,
+        mut is_failed: impl FnMut(&Path) -> bool,
+    ) -> Option<PathBuf> {
+        let direction = direction.signum();
+        if direction == 0 || self.members.is_empty() {
+            return None;
+        }
+        (1..=self.members.len()).find_map(|step| {
+            let offset = direction.saturating_mul(step as isize);
+            let candidate = self.member_path_adjacent(index, offset)?;
+            (!is_failed(&candidate)).then_some(candidate)
+        })
     }
 
     pub fn first_member(&self) -> Option<ArchiveMemberRef> {
@@ -257,6 +300,7 @@ impl ArchiveMemberRef {
         should_cancel: &impl Fn() -> bool,
         language: Language,
     ) -> ImageResult<()> {
+        let _span = crate::diagnostics::Span::new("archive_extract");
         let _guard = self
             .extraction_lock
             .lock()
@@ -520,10 +564,56 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    fn test_archive_path(label: &str) -> PathBuf {
+        let id = TEMP_DIRECTORY_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "kgen-archive-{label}-{}-{id}.zip",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn archive_members_navigate_in_natural_order_and_skip_failed_entries() {
+        let path = test_archive_path("navigation");
+        let data = include_bytes!("../../../resources/kgen-view-logo.png");
+        {
+            let mut writer = zip::ZipWriter::new(File::create(&path).unwrap());
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            for name in ["pages/page10.png", "pages/page2.png", "pages/page11.png"] {
+                writer.start_file(name, options).unwrap();
+                writer.write_all(data).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+
+        let archive = ArchiveSession::open(&path, &|| false, Language::Spanish).unwrap();
+        assert_eq!(archive.member_count(), 3);
+        let first = archive.first_member_path().unwrap();
+        let first_index = archive.member_index(&first).unwrap();
+        assert_eq!(archive.member_name(&first), Some("pages/page2.png"));
+        let second = archive.member_path_adjacent(first_index, 1).unwrap();
+        assert_eq!(archive.member_name(&second), Some("pages/page10.png"));
+        assert_eq!(
+            archive.member_name(&archive.member_path_adjacent(first_index, -1).unwrap()),
+            Some("pages/page11.png")
+        );
+        let next_valid = archive
+            .next_member_path_skipping(first_index, 1, |candidate| candidate == second)
+            .unwrap();
+        assert_eq!(archive.member_name(&next_valid), Some("pages/page11.png"));
+        assert!(
+            archive
+                .next_member_path_skipping(first_index, 1, |_| true)
+                .is_none()
+        );
+        drop(archive);
+        fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn extracted_sources_outlive_the_archive_window_and_are_cleaned_after_release() {
-        let path =
-            std::env::temp_dir().join(format!("kgen-archive-lease-{}.zip", std::process::id()));
+        let path = test_archive_path("lease");
         let data = include_bytes!("../../../resources/kgen-view-logo.png");
         {
             let mut writer = zip::ZipWriter::new(File::create(&path).unwrap());
@@ -538,7 +628,8 @@ mod tests {
             writer.finish().unwrap();
         }
         let archive = ArchiveSession::open(&path, &|| false, Language::Spanish).unwrap();
-        assert_eq!(archive.image_paths().len(), 2);
+        assert_eq!(archive.member_count(), 2);
+        assert!(archive.source_is_current());
         let member = archive.first_member().unwrap();
         let lease = member.lease();
         member.extract(&|| false, Language::Spanish).unwrap();
@@ -551,6 +642,7 @@ mod tests {
             .unwrap()
             .write_all(b"changed")
             .unwrap();
+        assert!(!archive.source_is_current());
         assert!(member.extract(&|| false, Language::Spanish).is_err());
         drop(member);
         drop(archive);

@@ -16,9 +16,8 @@ impl AppState {
             let frame = document.current_frame();
             let (width, height) = document.view_dimensions();
             let folder = self
-                .catalog
-                .index
-                .map(|i| format!("{}/{}", i + 1, self.catalog.files.len()))
+                .image_position()
+                .map(|(index, count)| format!("{index}/{count}"))
                 .unwrap_or_else(|| "—".into());
             let disk_size = crate::platform::text::format_bytes_decimal(document.file_size);
             let ram_size = crate::platform::text::format_bytes_decimal(frame.pixels.len() as u64);

@@ -68,6 +68,7 @@ impl AppState {
                         self.catalog = FolderCatalog::default();
                         self.catalog_stamp = None;
                         self.active_archive = None;
+                        self.archive_cursor = None;
                         self.cache.clear();
                         self.cache_bytes = 0;
                         self.catalog_loader.submit(
@@ -116,6 +117,8 @@ impl AppState {
                         self.cache_bytes = 0;
                         self.catalog = FolderCatalog::default();
                         self.catalog_stamp = None;
+                        self.active_archive = None;
+                        self.archive_cursor = None;
                         self.catalog_loader
                             .submit(self.generation, path.clone(), self.hwnd);
                         if let Some(edit) = self.pending_properties.take() {

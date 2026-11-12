@@ -256,9 +256,8 @@ impl AppState {
                     .into_owned()
             });
         let position = self
-            .catalog
-            .index
-            .map(|index| format!("{} / {}", index + 1, self.catalog.files.len()))
+            .image_position()
+            .map(|(index, count)| format!("{index} / {count}"))
             .unwrap_or_else(|| "—".into());
         let ratio = width as f64 / height.max(1) as f64;
         let (dpi_x, dpi_y) = doc.resolution_dpi;

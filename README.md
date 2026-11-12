@@ -204,7 +204,7 @@ KGen View mantiene una interfaz Win32 y renderizado Direct2D. La ventana coordin
 - **Trabajo en segundo plano:** carga, precarga, catálogo, guardado, preparación del portapapeles, renombrado, Papelera y limpieza de ZIP. Los resultados tienen propiedad explícita en buzones acotados.
 - **Renderizado:** texturas divididas en bloques y reutilizadas entre fotogramas compatibles; el repintado se produce por eventos. Minimizar pausa animación, presentación y precarga y libera cachés de presentación.
 - **Carpetas:** listas compartidas con búsqueda indexada y notificaciones de cambios; la comprobación periódica queda como alternativa cuando Windows no permite vigilar la carpeta.
-- **ZIP/CBZ:** lectores reutilizados por trabajador, extracción bajo demanda y referencias que mantienen los temporales vivos mientras los usan el visor o una exportación.
+- **ZIP/CBZ:** navegación ligada al índice ordenado del archivo, lectores reutilizados por trabajador, extracción bajo demanda y temporales con vida útil ligada al visor o a una exportación.
 
 El presupuesto por proceso permite reservar hasta **512 MiB de buffers CPU controlados** y **64 MiB de texturas de imagen**. La vista previa se limita a 32 MiB, la precarga a 16 MiB y la caché de fotogramas GIF a 32 MiB, subordinadas al presupuesto CPU común. Los códecs, Direct2D y sus controladores pueden realizar asignaciones internas adicionales: estos valores no son un límite absoluto de memoria del proceso.
 

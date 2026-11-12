@@ -159,15 +159,8 @@ pub(super) fn resolve_explorer_archive_selection(
 ) -> Option<ExplorerArchiveSelection> {
     let opened_path = opened_path.canonicalize().ok()?;
     let temp_directory = std::env::temp_dir().canonicalize().ok()?;
-    let relative_path = opened_path.strip_prefix(temp_directory).ok()?;
-    let mut components = relative_path.components();
-    let temp_folder_name = components.next()?.as_os_str().to_str()?;
-    let archive_name = archive_name_from_explorer_temp_folder(temp_folder_name)?;
-    let member_path = components.as_path();
-    if member_path.as_os_str().is_empty() || !crate::catalog::is_supported(member_path) {
-        return None;
-    }
-    let member_name = member_path.to_string_lossy().replace('\\', "/");
+    let (archive_name, member_name) =
+        parse_explorer_archive_member_path(&opened_path, &temp_directory)?;
     let expected_folder = Path::new(&member_name)
         .parent()
         .unwrap_or_else(|| Path::new(""))
@@ -188,7 +181,7 @@ pub(super) fn resolve_explorer_archive_selection(
         else {
             continue;
         };
-        if !source_name.eq_ignore_ascii_case(archive_name) {
+        if !source_name.eq_ignore_ascii_case(&archive_name) {
             continue;
         }
         let mut score = 0;
@@ -225,6 +218,22 @@ pub(super) fn resolve_explorer_archive_selection(
         archive_path: best_match?.0,
         member_name,
     })
+}
+
+fn parse_explorer_archive_member_path(
+    opened_path: &Path,
+    temp_directory: &Path,
+) -> Option<(String, String)> {
+    let relative_path = opened_path.strip_prefix(temp_directory).ok()?;
+    let mut components = relative_path.components();
+    let temp_folder_name = components.next()?.as_os_str().to_str()?;
+    let archive_name = archive_name_from_explorer_temp_folder(temp_folder_name)?.to_owned();
+    let member_path = components.as_path();
+    if member_path.as_os_str().is_empty() || !crate::catalog::is_supported(member_path) {
+        return None;
+    }
+    let member_name = member_path.to_string_lossy().replace('\\', "/");
+    Some((archive_name, member_name))
 }
 
 pub(super) fn archive_name_from_explorer_temp_folder(folder_name: &str) -> Option<&str> {
@@ -342,5 +351,35 @@ pub(super) fn point_from_lparam(value: LPARAM) -> POINT {
     POINT {
         x: loword(value.0 as usize) as i16 as i32,
         y: hiword(value.0 as usize) as i16 as i32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explorer_temp_path_resolves_the_nested_archive_member() {
+        let temp = std::env::temp_dir();
+        let opened = temp
+            .join("Temp12_Comic.CBZ")
+            .join("Chapter 1")
+            .join("page02.PNG");
+        assert_eq!(
+            parse_explorer_archive_member_path(&opened, &temp),
+            Some(("Comic.CBZ".into(), "Chapter 1/page02.PNG".into()))
+        );
+    }
+
+    #[test]
+    fn explorer_temp_path_rejects_unrelated_or_unsupported_files() {
+        let temp = std::env::temp_dir();
+        assert!(
+            parse_explorer_archive_member_path(&temp.join("photos/page02.png"), &temp).is_none()
+        );
+        assert!(
+            parse_explorer_archive_member_path(&temp.join("Temp12_Comic.zip/readme.txt"), &temp)
+                .is_none()
+        );
     }
 }

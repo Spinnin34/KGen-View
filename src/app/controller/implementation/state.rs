@@ -65,6 +65,7 @@ impl AppState {
             uploading: false,
             archive_sessions: Vec::new(),
             active_archive: None,
+            archive_cursor: None,
             archive_fallback: None,
             mcp_requests: None,
             pending_mcp_reply: None,

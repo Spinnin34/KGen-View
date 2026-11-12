@@ -152,10 +152,12 @@ impl DecodeService {
                                         };
                                         if let Some(member) = member {
                                             let image_path = member.path().to_path_buf();
-                                            let catalog = FolderCatalog::from_files(archive.image_paths(), Some(&image_path));
                                             let lease=member.lease();
                                             let result=member.extract(&should_cancel,language).and_then(|()|decode(&image_path)).map(|mut document| { document.source_lease=Some(lease); document });
-                                            (image_path, result, catalog, Some(archive))
+                                            // Archive navigation is driven by the session's sorted
+                                            // member list. Do not clone it into a folder catalog
+                                            // keyed by extracted temporary paths.
+                                            (image_path, result, FolderCatalog::default(), Some(archive))
                                         } else {
                                             let error = if language == Language::Spanish {
                                                 "No se encontró la imagen seleccionada dentro del ZIP."

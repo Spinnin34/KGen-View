@@ -159,6 +159,13 @@ struct ViewPayload {
     result: Result<ImageDocument, ImageError>,
 }
 
+struct ArchiveFallback {
+    catalog: FolderCatalog,
+    active_archive: Option<usize>,
+    archive_cursor: Option<usize>,
+    catalog_stamp: Option<SystemTime>,
+}
+
 type ViewKey = (u64, u64, usize, (u32, u32, u32, u32), (u32, u32));
 
 struct UploadPayload {
@@ -239,7 +246,8 @@ struct AppState {
     uploading: bool,
     archive_sessions: Vec<ArchiveSession>,
     active_archive: Option<usize>,
-    archive_fallback: Option<(FolderCatalog, Option<usize>, Option<SystemTime>)>,
+    archive_cursor: Option<usize>,
+    archive_fallback: Option<ArchiveFallback>,
     mcp_requests: Option<std::sync::mpsc::Receiver<crate::mcp::Request>>,
     pending_mcp_reply: Option<(
         serde_json::Value,
