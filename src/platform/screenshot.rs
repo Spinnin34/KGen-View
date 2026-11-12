@@ -20,7 +20,7 @@ use windows::{
     Win32::{
         Foundation::{
             COLORREF, ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT,
-            POINT, RECT, WPARAM,
+            POINT, RECT, SYSTEMTIME, WPARAM,
         },
         Graphics::Gdi::{
             BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLACK_BRUSH, BeginPaint, BitBlt, CAPTUREBLT,
@@ -819,12 +819,20 @@ fn select_and_capture(owner: HWND, spanish: bool) -> Result<(), String> {
     if width < 2 || height < 2 {
         return Ok(());
     }
+    let captured_at = unsafe { GetSystemTime() };
     let mut bgra = capture_bgra(rect)?;
     let destination = pictures_capture_dir()?;
     fs::create_dir_all(&destination)
         .map_err(|error| format!("No se pudo crear {}: {error}", destination.display()))?;
-    let path = unique_capture_path(&destination);
-    save_png(&path, width as u32, height as u32, &mut bgra)?;
+    let path = unique_capture_path(&destination, captured_at);
+    save_png(
+        &path,
+        width as u32,
+        height as u32,
+        &mut bgra,
+        &capture_author(),
+        captured_at,
+    )?;
     PreparedImage::new(width as u32, height as u32, &bgra)?.publish(owner)?;
     notify_capture(spanish);
     Ok(())
@@ -910,7 +918,14 @@ fn capture_bgra(rect: RECT) -> Result<Vec<u8>, String> {
     Ok(pixels)
 }
 
-fn save_png(path: &PathBuf, width: u32, height: u32, bgra: &mut [u8]) -> Result<(), String> {
+fn save_png(
+    path: &PathBuf,
+    width: u32,
+    height: u32,
+    bgra: &mut [u8],
+    author: &str,
+    captured_at: SYSTEMTIME,
+) -> Result<(), String> {
     for pixel in bgra.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
@@ -925,9 +940,45 @@ fn save_png(path: &PathBuf, width: u32, height: u32, bgra: &mut [u8]) -> Result<
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_compression(png::Compression::Fast);
         encoder.set_filter(png::Filter::NoFilter);
+        let creation_time = format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            captured_at.wYear,
+            captured_at.wMonth,
+            captured_at.wDay,
+            captured_at.wHour,
+            captured_at.wMinute,
+            captured_at.wSecond,
+            captured_at.wMilliseconds,
+        );
+        let software = format!("KGen View {}", env!("CARGO_PKG_VERSION"));
+        for (keyword, value) in [
+            ("Title", "Captura de pantalla de KGen View".to_owned()),
+            ("Author", author.to_owned()),
+            ("Description", "Captura rectangular de pantalla".to_owned()),
+            ("Creation Time", creation_time),
+            ("Software", software),
+            ("Source", "Escritorio de Windows".to_owned()),
+            ("Comment", "Captura creada con KGen View".to_owned()),
+        ] {
+            encoder
+                .add_itxt_chunk(keyword.to_owned(), value)
+                .map_err(|error| format!("No se pudieron añadir los metadatos PNG: {error}"))?;
+        }
         let mut writer = encoder
             .write_header()
             .map_err(|error| format!("No se pudo iniciar PNG: {error}"))?;
+        let time_chunk = [
+            (captured_at.wYear >> 8) as u8,
+            captured_at.wYear as u8,
+            captured_at.wMonth as u8,
+            captured_at.wDay as u8,
+            captured_at.wHour as u8,
+            captured_at.wMinute as u8,
+            captured_at.wSecond as u8,
+        ];
+        writer
+            .write_chunk(png::chunk::tIME, &time_chunk)
+            .map_err(|error| format!("No se pudo guardar la fecha PNG: {error}"))?;
         writer
             .write_image_data(bgra)
             .map_err(|error| format!("No se pudo guardar la captura: {error}"))
@@ -998,8 +1049,22 @@ fn pictures_capture_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(path).join("KGen"))
 }
 
-fn unique_capture_path(directory: &std::path::Path) -> PathBuf {
-    let utc = unsafe { GetSystemTime() };
+fn capture_author() -> String {
+    ["USERNAME", "USER"]
+        .into_iter()
+        .find_map(|key| std::env::var(key).ok())
+        .map(|name| {
+            name.chars()
+                .filter(|character| !character.is_control())
+                .collect::<String>()
+                .trim()
+                .to_owned()
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Unknown".to_owned())
+}
+
+fn unique_capture_path(directory: &std::path::Path, utc: SYSTEMTIME) -> PathBuf {
     let mut local = Default::default();
     let local = if unsafe { SystemTimeToTzSpecificLocalTime(None, &utc, &mut local) }.is_ok() {
         local

@@ -41,7 +41,7 @@ KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está constr
 - Guardar como con los codificadores de imagen detectados en Windows Imaging Component (WIC).
 - Copiar la imagen o su ruta al portapapeles.
 - Actualizaciones desde GitHub: la instalación comprueba versiones al iniciar y muestra un botón para descargar e instalar la publicación más reciente.
-- Captura rectangular opcional con atajo global; copia la imagen y la guarda en `Imagenes\KGen`.
+- Captura rectangular opcional con atajo global; copia la imagen y la guarda en `Imagenes\KGen` con autor de Windows, fecha UTC, titulo, descripcion y datos de KGen View en el PNG.
 - Envío a la Papelera de reciclaje con confirmación configurable.
 - Presentación con intervalo configurable.
 - Salto automático de archivos dañados o incompatibles durante la navegación.
