@@ -204,7 +204,7 @@ impl ArchiveSession {
     }
 
     pub fn member_path_adjacent(&self, index: usize, offset: isize) -> Option<PathBuf> {
-        if self.members.is_empty() {
+        if self.members.len() < 2 {
             return None;
         }
         let next = (index as isize + offset).rem_euclid(self.members.len() as isize) as usize;
@@ -636,6 +636,29 @@ mod tests {
                 .next_member_path_skipping(first_index, 1, |_| true)
                 .is_none()
         );
+        drop(archive);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn archive_with_one_member_does_not_reload_current_member() {
+        let path = test_archive_path("single-navigation");
+        let data = include_bytes!("../../../resources/kgen-view-logo.png");
+        {
+            let mut writer = zip::ZipWriter::new(File::create(&path).unwrap());
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            writer.start_file("only.png", options).unwrap();
+            writer.write_all(data).unwrap();
+            writer.finish().unwrap();
+        }
+
+        let archive = ArchiveSession::open(&path, &|| false, Language::Spanish).unwrap();
+        let only = archive.first_member_path().unwrap();
+        let index = archive.member_index(&only).unwrap();
+        assert!(archive.member_path_adjacent(index, 1).is_none());
+        assert!(archive.member_path_adjacent(index, -1).is_none());
+
         drop(archive);
         fs::remove_file(path).unwrap();
     }
