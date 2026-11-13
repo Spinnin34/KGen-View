@@ -88,7 +88,7 @@ impl FolderCatalog {
     }
 
     pub fn adjacent_wrapped(&self, offset: isize) -> Option<PathBuf> {
-        if self.files.is_empty() {
+        if self.files.len() < 2 {
             return None;
         }
         let current = self.index.unwrap_or(0) as isize;
@@ -203,6 +203,15 @@ mod tests {
             ..catalog
         };
         assert_eq!(first.adjacent_wrapped(-1), Some(PathBuf::from("c.png")));
+    }
+
+    #[test]
+    fn adjacent_wrapped_does_not_reload_single_image() {
+        let catalog =
+            FolderCatalog::from_files(vec![PathBuf::from("only.png")], Some(Path::new("only.png")));
+
+        assert!(catalog.adjacent_wrapped(1).is_none());
+        assert!(catalog.adjacent_wrapped(-1).is_none());
     }
 
     #[test]
