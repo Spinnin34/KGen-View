@@ -63,6 +63,26 @@ El diagnóstico es local y optativo. Registra etapas y consumo reservado, sin ru
 
 Para medir apertura y navegación de un archivo, repite la captura con un `.zip` o `.cbz` representativo y compara `archive_index`, `archive_extract`, `decode`, `first_visible_cache_hit` y `first_visible_cold` entre ejecuciones.
 
+### Perfiles sintéticos ZIP/CBZ
+
+Genera primero las imágenes y después dos archivos reproducibles: un CBZ con muchas páginas pequeñas para medir el índice y la navegación, y un ZIP con fotografías JPEG de 24 y 60 MP para medir extracción y decodificación pesadas.
+
+```powershell
+.\scripts\new-benchmark-fixtures.ps1
+.\scripts\new-benchmark-archives.ps1 -PageCount 1000
+```
+
+Para incluir PNG grandes, que requieren más espacio y tardan más en generarse:
+
+```powershell
+.\scripts\new-benchmark-fixtures.ps1 -LargePng
+.\scripts\new-benchmark-archives.ps1 -PageCount 1000 -IncludeLargePng
+```
+
+Abre cada archivo en la aplicación con `KGEN_PERF=1`, recorre páginas con la rueda y guarda la salida por separado. Repite cada perfil varias veces y compara mediana y p95 de `archive_index`, `archive_extract`, `decode`, `first_visible_cache_hit` y `first_visible_cold`. Registra también el máximo de memoria privada/residente del proceso; `cpu_bytes` y `cpu_peak` solo representan reservas que la aplicación controla. ZIP usa un único lector compartido en caché; la precarga lo libera al cancelarse ante una petición visible. El cambio no añade trabajadores ni presupuestos de memoria.
+
+Los archivos ZIP sintéticos se crean mediante copia por bloques, sin cargar las imágenes completas en memoria. Se conservan los archivos existentes: para generar un perfil nuevo, usa otro `-PageCount` o elimina manualmente el artefacto concreto dentro de `target/performance-fixtures/archives`.
+
 ## Calidad y aceptación
 
 ```powershell

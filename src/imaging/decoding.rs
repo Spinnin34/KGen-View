@@ -119,16 +119,8 @@ impl ImageDocument {
         if should_cancel() {
             return None;
         }
-        let extension = path.extension().and_then(|value| value.to_str())?;
-        let extension = extension.to_ascii_lowercase();
-        if extension == "gif" {
-            return None;
-        }
         let file_size = fs::metadata(path).ok()?.len();
-        if file_size > MAX_PREFETCH_FILE_BYTES
-            || (extension == "jxl" && file_size > MAX_JXL_PREFETCH_FILE_BYTES)
-            || (extension == "svg" && file_size > MAX_PREFETCH_SVG_BYTES)
-        {
+        if !prefetch_source_supported(path, file_size) {
             return None;
         }
         let mut request = DecodeRequest::prefetch_preview();

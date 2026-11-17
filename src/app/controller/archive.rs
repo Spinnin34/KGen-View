@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -144,7 +143,6 @@ impl ArchiveSession {
         if entries.is_empty() {
             return Err(no_images_error(language));
         }
-
         let storage = Arc::new(ArchiveStorage {
             root: create_temp_directory().map_err(ImageError::from)?,
             leases: Mutex::new(HashMap::new()),
@@ -172,6 +170,7 @@ impl ArchiveSession {
                 .entry(member.name.to_ascii_lowercase())
                 .or_insert(index);
         }
+        remember_archive_reader(source_path, source_stamp, archive, should_cancel, language)?;
         Ok(Self {
             source_path: source_path.to_path_buf(),
             storage,
@@ -357,86 +356,95 @@ impl ArchiveMemberRef {
         should_cancel: &impl Fn() -> bool,
         language: Language,
     ) -> ImageResult<()> {
-        ZIP_READER.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if slot.as_ref().is_none_or(|cache| {
-                cache.path != self.source_path || cache.stamp != self.source_stamp
+        let mut reader = self.archive_reader(should_cancel, language)?;
+        let archive = &mut reader
+            .as_mut()
+            .expect("ZIP reader cache initialized")
+            .archive;
+        let mut zipped_file = archive
+            .by_index(self.index)
+            .map_err(|error| archive_error(language, &error.to_string()))?;
+        if zipped_file.size() != self.size {
+            return Err(localized_error(
+                language,
+                "El archivo ZIP cambió mientras se estaba leyendo.",
+                "The ZIP archive changed while it was being read.",
+            ));
+        }
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(partial_path)
+            .map_err(ImageError::from)?;
+        let mut image_bytes = 0u64;
+        let mut buffer = [0u8; COPY_BUFFER_BYTES];
+        loop {
+            if should_cancel() {
+                return Err(ImageError("Carga cancelada.".into()));
+            }
+            let count = zipped_file
+                .read(&mut buffer)
+                .map_err(|error| archive_error(language, &error.to_string()))?;
+            if count == 0 {
+                break;
+            }
+            image_bytes = image_bytes.saturating_add(count as u64);
+            if image_bytes > MAX_ARCHIVE_MEMBER_BYTES {
+                return Err(localized_error(
+                    language,
+                    "Esta imagen del ZIP supera el límite de extracción de 512 MiB.",
+                    "This image in the ZIP exceeds the 512 MiB extraction limit.",
+                ));
+            }
+            output
+                .write_all(&buffer[..count])
+                .map_err(ImageError::from)?;
+        }
+        if image_bytes != self.size {
+            return Err(localized_error(
+                language,
+                "La imagen dentro del ZIP está incompleta o dañada.",
+                "The image inside the ZIP is incomplete or damaged.",
+            ));
+        }
+        output.flush().map_err(ImageError::from)
+    }
+
+    fn archive_reader(
+        &self,
+        should_cancel: &impl Fn() -> bool,
+        language: Language,
+    ) -> ImageResult<MutexGuard<'static, Option<ZipReader>>> {
+        loop {
+            if should_cancel() {
+                return Err(ImageError("Carga cancelada.".into()));
+            }
+            let mut reader = match zip_reader_cache().try_lock() {
+                Ok(reader) => reader,
+                Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) => {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    continue;
+                }
+            };
+            if reader.as_ref().is_none_or(|cached| {
+                cached.path != self.source_path || cached.stamp != self.source_stamp
             }) {
-                let file = File::open(&self.source_path)?;
-                if file_stamp(&file.metadata()?) != self.source_stamp {
+                let file = File::open(&self.source_path).map_err(ImageError::from)?;
+                if file_stamp(&file.metadata().map_err(ImageError::from)?) != self.source_stamp {
                     return Err(archive_changed_error(language));
                 }
                 let archive = zip::ZipArchive::new(file)
-                    .map_err(|e| archive_error(language, &e.to_string()))?;
-                *slot = Some(ZipReader {
+                    .map_err(|error| archive_error(language, &error.to_string()))?;
+                *reader = Some(ZipReader {
                     path: self.source_path.clone(),
                     stamp: self.source_stamp,
                     archive,
                 });
             }
-            let archive = &mut slot.as_mut().expect("ZIP reader").archive;
-            let mut zipped_file = archive
-                .by_index(self.index)
-                .map_err(|error| archive_error(language, &error.to_string()))?;
-            if zipped_file.size() != self.size {
-                return Err(localized_error(
-                    language,
-                    "El archivo ZIP cambió mientras se estaba leyendo.",
-                    "The ZIP archive changed while it was being read.",
-                ));
-            }
-            let mut output = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(partial_path)
-                .map_err(ImageError::from)?;
-            let mut image_bytes = 0u64;
-            let mut buffer = [0u8; COPY_BUFFER_BYTES];
-            loop {
-                if should_cancel() {
-                    return Err(ImageError("Carga cancelada.".into()));
-                }
-                let count = zipped_file
-                    .read(&mut buffer)
-                    .map_err(|error| archive_error(language, &error.to_string()))?;
-                if count == 0 {
-                    break;
-                }
-                image_bytes = image_bytes.saturating_add(count as u64);
-                if image_bytes > MAX_ARCHIVE_MEMBER_BYTES {
-                    return Err(localized_error(
-                        language,
-                        "Esta imagen del ZIP supera el límite de extracción de 512 MiB.",
-                        "This image in the ZIP exceeds the 512 MiB extraction limit.",
-                    ));
-                }
-                output
-                    .write_all(&buffer[..count])
-                    .map_err(ImageError::from)?;
-            }
-            if image_bytes != self.size {
-                return Err(localized_error(
-                    language,
-                    "La imagen dentro del ZIP está incompleta o dañada.",
-                    "The image inside the ZIP is incomplete or damaged.",
-                ));
-            }
-            output.flush().map_err(ImageError::from)
-        })
+            return Ok(reader);
+        }
     }
-}
-
-fn archive_member_can_prefetch(path: &Path, size: u64) -> bool {
-    let max_bytes = if path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("jxl"))
-    {
-        crate::imaging::MAX_JXL_PREFETCH_FILE_BYTES
-    } else {
-        crate::imaging::MAX_PREFETCH_FILE_BYTES
-    };
-    size <= max_bytes
 }
 
 struct ZipReader {
@@ -444,7 +452,47 @@ struct ZipReader {
     stamp: ArchiveStamp,
     archive: zip::ZipArchive<File>,
 }
-thread_local! { static ZIP_READER:RefCell<Option<ZipReader>>=const { RefCell::new(None) }; }
+
+fn zip_reader_cache() -> &'static Mutex<Option<ZipReader>> {
+    // Bound parsed ZIP metadata to one shared reader across windows and workers.
+    static CACHE: OnceLock<Mutex<Option<ZipReader>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn remember_archive_reader(
+    source_path: &Path,
+    source_stamp: ArchiveStamp,
+    archive: zip::ZipArchive<File>,
+    should_cancel: &impl Fn() -> bool,
+    language: Language,
+) -> ImageResult<()> {
+    if should_cancel() {
+        return Err(ImageError("Carga cancelada.".into()));
+    }
+    let mut cache = match zip_reader_cache().try_lock() {
+        Ok(cache) => cache,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return Ok(()),
+    };
+    if archive_stamp(source_path).map_err(ImageError::from)? != source_stamp {
+        return Err(archive_changed_error(language));
+    }
+    if cache
+        .as_ref()
+        .is_none_or(|cached| cached.path != source_path || cached.stamp != source_stamp)
+    {
+        *cache = Some(ZipReader {
+            path: source_path.to_path_buf(),
+            stamp: source_stamp,
+            archive,
+        });
+    }
+    Ok(())
+}
+
+fn archive_member_can_prefetch(path: &Path, size: u64) -> bool {
+    crate::imaging::prefetch_source_supported(path, size)
+}
 
 #[derive(Default)]
 struct CleanupQueue {
@@ -625,6 +673,15 @@ mod tests {
             Path::new("page.jxl"),
             jxl_limit + 1
         ));
+        assert!(!archive_member_can_prefetch(Path::new("page.gif"), 1024));
+        assert!(archive_member_can_prefetch(
+            Path::new("page.svg"),
+            512 * 1024
+        ));
+        assert!(!archive_member_can_prefetch(
+            Path::new("page.svg"),
+            512 * 1024 + 1
+        ));
     }
 
     fn test_archive_path(label: &str) -> PathBuf {
@@ -742,7 +799,6 @@ mod tests {
             !directory.exists(),
             "temporary directory retained after the last lease"
         );
-        ZIP_READER.with(|slot| slot.borrow_mut().take());
         fs::remove_file(path).unwrap();
     }
 }

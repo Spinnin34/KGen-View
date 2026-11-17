@@ -38,6 +38,17 @@ const MAX_PREFETCH_SVG_BYTES: u64 = 512 * 1024;
 const MAX_COPY_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 const MAX_WIC_COPY_CHUNK_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SVG_BYTES: u64 = 64 * 1024 * 1024;
+
+pub(crate) fn prefetch_source_supported(path: &Path, size: u64) -> bool {
+    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    let extension = extension.to_ascii_lowercase();
+    extension != "gif"
+        && size <= MAX_PREFETCH_FILE_BYTES
+        && (extension != "jxl" || size <= MAX_JXL_PREFETCH_FILE_BYTES)
+        && (extension != "svg" || size <= MAX_PREFETCH_SVG_BYTES)
+}
 mod decoding;
 mod encoding;
 mod jxl;
