@@ -121,16 +121,17 @@ impl ImageDocument {
         }
         let extension = path.extension().and_then(|value| value.to_str())?;
         let extension = extension.to_ascii_lowercase();
-        if matches!(extension.as_str(), "gif" | "jxl") {
+        if extension == "gif" {
             return None;
         }
         let file_size = fs::metadata(path).ok()?.len();
         if file_size > MAX_PREFETCH_FILE_BYTES
+            || (extension == "jxl" && file_size > MAX_JXL_PREFETCH_FILE_BYTES)
             || (extension == "svg" && file_size > MAX_PREFETCH_SVG_BYTES)
         {
             return None;
         }
-        let mut request = DecodeRequest::preview((1920, 1080));
+        let mut request = DecodeRequest::prefetch_preview();
         request.max_bytes = MAX_PREFETCH_DECODE_BYTES as usize;
         Some(Self::decode_request(path, should_cancel, factory, &request))
     }

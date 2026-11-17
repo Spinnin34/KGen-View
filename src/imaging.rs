@@ -31,7 +31,8 @@ use windows::Win32::Storage::FileSystem::{
 
 const MAX_DECODE_BYTES: u64 = crate::resources::CPU_LIMIT as u64;
 const MAX_FRAMES: u32 = 512;
-const MAX_PREFETCH_FILE_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_PREFETCH_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_JXL_PREFETCH_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_PREFETCH_DECODE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_PREFETCH_SVG_BYTES: u64 = 512 * 1024;
 const MAX_COPY_CHUNK_BYTES: usize = 4 * 1024 * 1024;

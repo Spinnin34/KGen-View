@@ -8,7 +8,12 @@ pub(super) fn decode_jxl(
     if should_cancel() {
         return Err(ImageError("Carga cancelada.".into()));
     }
-    let tracker_bytes = (256 * crate::resources::MIB)
+    let tracker_limit = if request.prefetch_only {
+        64 * crate::resources::MIB
+    } else {
+        256 * crate::resources::MIB
+    };
+    let tracker_bytes = tracker_limit
         .min(crate::resources::CPU_LIMIT.saturating_sub(crate::resources::cpu_budget().used()));
     let _decoder_memory = crate::resources::cpu_budget().reserve(tracker_bytes)?;
     let file_size = fs::metadata(path)?.len();
@@ -44,6 +49,12 @@ pub(super) fn decode_jxl(
     if pixel_bytes > MAX_DECODE_BYTES {
         return Err(ImageError(
             "La imagen JPEG XL supera el límite de 512 MiB.".into(),
+        ));
+    }
+
+    if request.prefetch_only && pixel_bytes > request.max_bytes as u64 {
+        return Err(ImageError(
+            "JPEG XL preview is too large to prefetch.".into(),
         ));
     }
 

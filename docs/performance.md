@@ -11,7 +11,7 @@ Visor generalista para equipos de 4–8 GB, con fotografía de hasta 60 MP como 
 - `resources`: reservas CPU/GPU compartidas y buffers de píxeles inmutables con copia al modificar. Clonar un documento o una instantánea no duplica sus píxeles.
 - `mailbox`: un resultado pendiente por servicio; reemplazo y cierre liberan los objetos. Los mensajes Win32 notifican disponibilidad y no transportan punteros propietarios.
 
-La navegación conserva únicamente la petición pendiente más reciente. La precarga secuencial mantiene hasta dos vistas previas en la dirección actual y entrega cada resultado a la interfaz antes de continuar; esto evita que el buzón de resultado único descarte una de las imágenes precargadas. El caché mantiene su límite de 16 MiB. Las escrituras explícitas usan un servicio que rechaza operaciones solapadas; conversión y guardado comparten además un cerrojo de exportación. El guardado se aplica a la ventana solo si coinciden documento y revisión. La navegación o el cierre solicitados durante un guardado continúan después de completarlo correctamente.
+La navegación conserva únicamente la petición pendiente más reciente. Los cambios de rueda a imágenes que aún no están en caché se agrupan durante 24 ms; los aciertos de caché siguen siendo inmediatos. La precarga secuencial mantiene hasta dos vistas previas en la dirección actual y entrega cada resultado a la interfaz antes de continuar. El caché mantiene su límite de 16 MiB. Los formatos compatibles precargan fuentes de hasta 64 MiB; SVG se limita a 512 KiB, GIF no se precarga y JPEG XL se limita a 16 MiB y 4 MP. Los miembros ZIP conservan el máximo de extracción de 512 MiB. Las escrituras explícitas usan un servicio que rechaza operaciones solapadas; conversión y guardado comparten además un cerrojo de exportación. El guardado se aplica a la ventana solo si coinciden documento y revisión. La navegación o el cierre solicitados durante un guardado continúan después de completarlo correctamente.
 
 Las transformaciones geométricas se componen en una correspondencia entre coordenadas de pantalla, imagen editada y fuente original. WIC recibe el recorte y la orientación resultantes; las fotografías compatibles se exportan desde esa cadena sin crear primero una copia CPU completa. JPEG convierte la transparencia sobre blanco en bloques de filas.
 
@@ -22,7 +22,7 @@ Las transformaciones geométricas se componen en una correspondencia entre coord
 | Reservas CPU controladas, incluidas tareas activas | 512 MiB |
 | Texturas de imagen Direct2D | 64 MiB |
 | Vista previa o región solicitada | 32 MiB |
-| Precarga de imágenes adyacentes | 16 MiB y 8 entradas |
+| Caché de vistas previas | 16 MiB y 8 entradas; origen de hasta 64 MiB |
 | Caché de fotogramas compuestos GIF | 32 MiB |
 | Trabajadores internos JPEG XL | 2 |
 

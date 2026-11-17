@@ -124,8 +124,10 @@ const TIMER_SLIDESHOW: usize = 2;
 const TIMER_FOLDER_REFRESH: usize = 3;
 const TIMER_AUTO_RESIZE: usize = 4;
 const TIMER_AUTO_ADVANCE: usize = 6;
+const TIMER_WHEEL_NAVIGATION: usize = 7;
 const FOLDER_REFRESH_INTERVAL_MS: u32 = 5_000;
 const AUTO_RESIZE_DELAY_MS: u32 = 120;
+const WHEEL_NAVIGATION_COALESCE_MS: u32 = 24;
 #[derive(Clone, Copy, Debug)]
 enum ZoomMode {
     Fit,
@@ -194,6 +196,7 @@ struct AppState {
     export_formats: Option<Vec<crate::imaging::ExportFormat>>,
     selected_export_format: usize,
     active_path: Option<PathBuf>,
+    pending_wheel_path: Option<PathBuf>,
     catalog: FolderCatalog,
     cache: Vec<(PathBuf, ImageDocument)>,
     cache_bytes: usize,

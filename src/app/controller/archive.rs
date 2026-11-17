@@ -20,7 +20,6 @@ use crate::{
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 const MAX_ARCHIVE_IMAGES: usize = 20_000;
 const MAX_ARCHIVE_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
-const MAX_PREFETCH_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const COPY_BUFFER_BYTES: usize = 128 * 1024;
 static TEMP_DIRECTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
 type ArchiveStamp = (u64, Option<SystemTime>);
@@ -298,7 +297,7 @@ impl ArchiveMemberRef {
     }
 
     pub fn can_prefetch(&self) -> bool {
-        self.size <= MAX_PREFETCH_FILE_BYTES
+        archive_member_can_prefetch(&self.path, self.size)
     }
 
     pub fn extract(
@@ -425,6 +424,19 @@ impl ArchiveMemberRef {
             output.flush().map_err(ImageError::from)
         })
     }
+}
+
+fn archive_member_can_prefetch(path: &Path, size: u64) -> bool {
+    let max_bytes = if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("jxl"))
+    {
+        crate::imaging::MAX_JXL_PREFETCH_FILE_BYTES
+    } else {
+        crate::imaging::MAX_PREFETCH_FILE_BYTES
+    };
+    size <= max_bytes
 }
 
 struct ZipReader {
@@ -592,6 +604,28 @@ fn localized_error(language: Language, spanish: &str, english: &str) -> ImageErr
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn zip_prefetch_allows_bounded_large_members_and_keeps_jxl_tighter() {
+        let large_limit = crate::imaging::MAX_PREFETCH_FILE_BYTES;
+        let jxl_limit = crate::imaging::MAX_JXL_PREFETCH_FILE_BYTES;
+        assert!(archive_member_can_prefetch(
+            Path::new("page.png"),
+            large_limit
+        ));
+        assert!(!archive_member_can_prefetch(
+            Path::new("page.png"),
+            large_limit + 1
+        ));
+        assert!(archive_member_can_prefetch(
+            Path::new("page.jxl"),
+            jxl_limit
+        ));
+        assert!(!archive_member_can_prefetch(
+            Path::new("page.jxl"),
+            jxl_limit + 1
+        ));
+    }
 
     fn test_archive_path(label: &str) -> PathBuf {
         let id = TEMP_DIRECTORY_COUNTER.fetch_add(1, Ordering::Relaxed);

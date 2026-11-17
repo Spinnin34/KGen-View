@@ -227,13 +227,81 @@ impl AppState {
     }
 
     pub(super) fn navigate(&mut self, offset: isize) {
+        self.cancel_wheel_navigation();
         if let Some(path) = self.adjacent_image_path(offset) {
             self.prefetch_enabled = true;
             self.navigation_direction = offset.signum();
             self.request_leave(PendingAction::Load(path));
         }
     }
+
+    pub(super) fn navigate_wheel(&mut self, offset: isize) {
+        let Some(path) = self.adjacent_image_path(offset) else {
+            return;
+        };
+        self.prefetch_enabled = true;
+        self.navigation_direction = offset.signum();
+
+        if self.active_path.as_ref() == Some(&path) {
+            self.cancel_wheel_navigation();
+            self.update_navigation_cursor(&path);
+            return;
+        }
+
+        let cached = self.cache.iter().any(|(cached, _)| cached == &path);
+        let has_unsaved_changes = self.document.as_ref().is_some_and(|doc| doc.dirty);
+        if cached || has_unsaved_changes {
+            self.cancel_wheel_navigation();
+            self.update_navigation_cursor(&path);
+            self.request_leave(PendingAction::Load(path));
+            return;
+        }
+
+        self.update_navigation_cursor(&path);
+        self.pending_wheel_path = Some(path);
+        unsafe {
+            let _ = KillTimer(Some(self.hwnd), TIMER_WHEEL_NAVIGATION);
+            if SetTimer(
+                Some(self.hwnd),
+                TIMER_WHEEL_NAVIGATION,
+                WHEEL_NAVIGATION_COALESCE_MS,
+                None,
+            ) == 0
+            {
+                self.flush_wheel_navigation();
+            }
+        }
+    }
+
+    pub(super) fn flush_wheel_navigation(&mut self) {
+        unsafe {
+            let _ = KillTimer(Some(self.hwnd), TIMER_WHEEL_NAVIGATION);
+        }
+        if let Some(path) = self.pending_wheel_path.take() {
+            self.request_leave(PendingAction::Load(path));
+        }
+    }
+
+    pub(super) fn cancel_wheel_navigation(&mut self) {
+        self.pending_wheel_path = None;
+        unsafe {
+            let _ = KillTimer(Some(self.hwnd), TIMER_WHEEL_NAVIGATION);
+        }
+    }
+
+    fn update_navigation_cursor(&mut self, path: &Path) {
+        if let Some(index) = self.active_archive {
+            self.archive_cursor = self
+                .archive_sessions
+                .get(index)
+                .and_then(|archive| archive.member_index(path));
+        } else if self.catalog.contains(path) {
+            self.catalog.update_index(path);
+        }
+    }
+
     pub(super) fn navigate_edge(&mut self, first: bool) {
+        self.cancel_wheel_navigation();
         let path = self.edge_image_path(first);
         if let Some(path) = path {
             self.prefetch_enabled = true;
@@ -250,6 +318,7 @@ impl AppState {
         }
     }
     pub(super) fn request_leave(&mut self, action: PendingAction) {
+        self.cancel_wheel_navigation();
         if self.file_busy {
             self.pending_action = Some(action);
             return;

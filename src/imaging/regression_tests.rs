@@ -307,6 +307,19 @@ fn jpeg_xl_lossless_alpha_and_edited_regions_match_png() {
         decoded.current_frame().pixels,
         original.current_frame().pixels
     );
+    let prefetched = ImageDocument::decode_prefetch_cancellable(&jxl, &|| false, None)
+        .expect("small JPEG XL can be prefetched")
+        .unwrap();
+    assert_eq!(prefetched.original_size, decoded.original_size);
+    assert_eq!(
+        prefetched.current_frame().pixels,
+        decoded.current_frame().pixels
+    );
+
+    let mut bounded_prefetch = DecodeRequest::prefetch_preview();
+    bounded_prefetch.max_bytes = 1;
+    assert!(ImageDocument::decode_request(&jxl, &|| false, None, &bounded_prefetch).is_err());
+
     let mut request = DecodeRequest::original(0);
     request.operations = vec![EditOperation::RotateRight, EditOperation::Crop(2, 3, 7, 14)];
     request.region = Some((1, 2, 4, 7));

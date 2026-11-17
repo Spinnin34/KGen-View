@@ -8,6 +8,7 @@ pub struct DecodeRequest {
     pub operations: Vec<EditOperation>,
     pub max_bytes: usize,
     pub allow_downsample: bool,
+    pub prefetch_only: bool,
 }
 
 impl DecodeRequest {
@@ -19,6 +20,7 @@ impl DecodeRequest {
             operations: Vec::new(),
             max_bytes: crate::resources::CPU_LIMIT,
             allow_downsample: false,
+            prefetch_only: false,
         }
     }
     pub fn preview(target: (u32, u32)) -> Self {
@@ -27,6 +29,12 @@ impl DecodeRequest {
             max_bytes: crate::resources::PREVIEW_LIMIT,
             allow_downsample: true,
             ..Self::original(0)
+        }
+    }
+    pub fn prefetch_preview() -> Self {
+        Self {
+            prefetch_only: true,
+            ..Self::preview((1920, 1080))
         }
     }
     pub fn layout(&self, original: (u32, u32)) -> ViewLayout {

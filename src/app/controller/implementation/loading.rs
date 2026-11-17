@@ -14,6 +14,7 @@ impl AppState {
         path: PathBuf,
         initial_archive_member: Option<String>,
     ) {
+        self.cancel_wheel_navigation();
         // Keep a completed look-ahead result if its wakeup is still queued
         // when the user navigates again.
         if let Some(payload) = self.loader.take_prefetch() {

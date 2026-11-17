@@ -150,7 +150,7 @@ pub(super) unsafe extern "system" fn window_proc(
                 }
                 state.change_zoom_at(if delta > 0 { 1.15 } else { 1.0 / 1.15 }, Some(point));
             } else {
-                state.navigate(if delta > 0 { -1 } else { 1 });
+                state.navigate_wheel(if delta > 0 { -1 } else { 1 });
             }
             LRESULT(0)
         }
@@ -358,6 +358,8 @@ pub(super) unsafe extern "system" fn window_proc(
         WM_TIMER => {
             if wparam.0 == TIMER_ANIMATION {
                 state.change_frame(1);
+            } else if wparam.0 == TIMER_WHEEL_NAVIGATION {
+                state.flush_wheel_navigation();
             } else if wparam.0 == TIMER_VIEW {
                 unsafe {
                     let _ = KillTimer(Some(hwnd), TIMER_VIEW);

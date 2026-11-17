@@ -12,6 +12,7 @@ impl AppState {
             export_formats: None,
             selected_export_format: 0,
             active_path: None,
+            pending_wheel_path: None,
             catalog: FolderCatalog::default(),
             cache: Vec::new(),
             cache_bytes: 0,
