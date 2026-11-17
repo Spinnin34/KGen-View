@@ -11,7 +11,7 @@ Visor generalista para equipos de 4–8 GB, con fotografía de hasta 60 MP como 
 - `resources`: reservas CPU/GPU compartidas y buffers de píxeles inmutables con copia al modificar. Clonar un documento o una instantánea no duplica sus píxeles.
 - `mailbox`: un resultado pendiente por servicio; reemplazo y cierre liberan los objetos. Los mensajes Win32 notifican disponibilidad y no transportan punteros propietarios.
 
-La navegación conserva únicamente la petición pendiente más reciente. Las escrituras explícitas usan un servicio que rechaza operaciones solapadas; conversión y guardado comparten además un cerrojo de exportación. El guardado se aplica a la ventana solo si coinciden documento y revisión. La navegación o el cierre solicitados durante un guardado continúan después de completarlo correctamente.
+La navegación conserva únicamente la petición pendiente más reciente. La precarga secuencial mantiene hasta dos vistas previas en la dirección actual y entrega cada resultado a la interfaz antes de continuar; esto evita que el buzón de resultado único descarte una de las imágenes precargadas. El caché mantiene su límite de 16 MiB. Las escrituras explícitas usan un servicio que rechaza operaciones solapadas; conversión y guardado comparten además un cerrojo de exportación. El guardado se aplica a la ventana solo si coinciden documento y revisión. La navegación o el cierre solicitados durante un guardado continúan después de completarlo correctamente.
 
 Las transformaciones geométricas se componen en una correspondencia entre coordenadas de pantalla, imagen editada y fuente original. WIC recibe el recorte y la orientación resultantes; las fotografías compatibles se exportan desde esa cadena sin crear primero una copia CPU completa. JPEG convierte la transparencia sobre blanco en bloques de filas.
 
@@ -59,9 +59,9 @@ $env:KGEN_PERF = '1'
 Remove-Item Env:\KGEN_PERF
 ```
 
-El diagnóstico es local y optativo. Registra etapas y consumo reservado, sin rutas ni metadatos de las imágenes. `archive_index` y `archive_extract` miden el indexado del ZIP y la extracción de cada miembro; `first_visible` se registra tras completar el primer dibujo de la nueva imagen. También se registran decodificación, reducción nativa, copia de píxeles, subida a GPU y exportación.
+El diagnóstico es local y optativo. Registra etapas y consumo reservado, sin rutas ni metadatos de las imágenes. `archive_index` y `archive_extract` miden el indexado del ZIP y la extracción de cada miembro; `first_visible_cache_hit` y `first_visible_cold` miden desde la petición hasta completar el primer dibujo, separando aciertos de caché de cargas en frío. También se registran decodificación, reducción nativa, copia de píxeles, subida a GPU y exportación.
 
-Para medir apertura y navegación de un archivo, repite la captura con un `.zip` o `.cbz` representativo y compara `archive_index`, `archive_extract`, `decode` y `first_visible` entre ejecuciones.
+Para medir apertura y navegación de un archivo, repite la captura con un `.zip` o `.cbz` representativo y compara `archive_index`, `archive_extract`, `decode`, `first_visible_cache_hit` y `first_visible_cold` entre ejecuciones.
 
 ## Calidad y aceptación
 
@@ -74,7 +74,7 @@ cargo build --locked --release
 
 La integración continua de Windows usa Rust 1.99.0 y ejecuta esas comprobaciones. Las pruebas incluyen orientación EXIF, color y transparencia, exportación nativa desde vistas previas, TIFF bajo demanda, GIF, JPEG XL con alfa y regiones, fuentes modificadas externamente, reservas concurrentes, catálogos de 100.000 entradas, vida útil de ZIP y cancelación de vigilancia.
 
-Objetivos para un equipo de referencia con 4 GB, SSD y pantalla 1080p: respuesta de interfaz p95 inferior a 50 ms; navegación desde caché inferior a 100 ms; CPU media en reposo inferior al 0,5 %; ausencia de crecimiento sostenido de memoria o identificadores tras 1.000 navegaciones. La validación en ese hardware y la latencia de entrada requieren una prueba de la aplicación completa; las sondas de decodificación por sí solas no acreditan esos objetivos.
+Objetivos para un equipo de referencia con 4 GB, SSD y pantalla 1080p: cambio desde caché p95 de 16 ms o menos; respuesta de interfaz p95 inferior a 50 ms; CPU media en reposo inferior al 0,5 %; ausencia de crecimiento sostenido de memoria o identificadores tras 1.000 navegaciones. La validación en ese hardware y la latencia de entrada requieren una prueba de la aplicación completa; las sondas de decodificación por sí solas no acreditan esos objetivos.
 
 ## Resultado local del 11 de noviembre de 2026
 

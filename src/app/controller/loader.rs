@@ -16,6 +16,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use windows::Win32::{
@@ -74,6 +75,7 @@ struct PrefetchWork {
 pub(super) struct DecodeService {
     pending: Arc<(Mutex<Option<DecodeWork>>, Condvar)>,
     prefetch_pending: Arc<(Mutex<Option<PrefetchWork>>, Condvar)>,
+    prefetch_ack: Arc<(Mutex<bool>, Condvar)>,
     current_generation: Arc<AtomicU64>,
     shutdown: Arc<AtomicBool>,
     workers: Vec<JoinHandle<()>>,
@@ -96,6 +98,7 @@ impl DecodeService {
         let worker_views = views.clone();
         let pending = Arc::new((Mutex::new(None::<DecodeWork>), Condvar::new()));
         let prefetch_pending = Arc::new((Mutex::new(None::<PrefetchWork>), Condvar::new()));
+        let prefetch_ack = Arc::new((Mutex::new(false), Condvar::new()));
         let current_generation = Arc::new(AtomicU64::new(0));
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_pending = pending.clone();
@@ -234,6 +237,7 @@ impl DecodeService {
 
         let worker_pending = pending.clone();
         let worker_prefetch_pending = prefetch_pending.clone();
+        let worker_prefetch_ack = prefetch_ack.clone();
         let worker_generation = current_generation.clone();
         let worker_shutdown = shutdown.clone();
         let worker_prefetches = prefetches.clone();
@@ -305,6 +309,10 @@ impl DecodeService {
                         if result.is_err() {
                             continue;
                         }
+                        {
+                            let (lock, _) = &*worker_prefetch_ack;
+                            *lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
+                        }
                         if !post_prefetch(
                             &worker_prefetches,
                             &window_alive,
@@ -319,8 +327,10 @@ impl DecodeService {
                                 }),
                             },
                         ) {
+                            wake_prefetch_ack(&worker_prefetch_ack);
                             break;
                         }
+                        wait_for_prefetch_ack(&worker_prefetch_ack, &should_cancel);
                     }
                 }
                 if initialized {
@@ -332,6 +342,7 @@ impl DecodeService {
         Self {
             pending,
             prefetch_pending,
+            prefetch_ack,
             current_generation,
             shutdown,
             workers: vec![decode_worker, prefetch_worker],
@@ -370,6 +381,8 @@ impl DecodeService {
         let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         *slot = None;
         wake.notify_one();
+        drop(slot);
+        wake_prefetch_ack(&self.prefetch_ack);
     }
 
     pub fn set_suspended(&self, value: bool) {
@@ -381,6 +394,7 @@ impl DecodeService {
                 .unwrap_or_else(|e| e.into_inner())
                 .take();
             self.prefetches.take();
+            wake_prefetch_ack(&self.prefetch_ack);
         }
     }
 
@@ -389,6 +403,9 @@ impl DecodeService {
     }
     pub fn take_prefetch(&self) -> Option<PrefetchPayload> {
         self.prefetches.take()
+    }
+    pub fn ack_prefetch(&self) {
+        wake_prefetch_ack(&self.prefetch_ack);
     }
     pub fn take_view(&self) -> Option<ViewPayload> {
         self.views.take()
@@ -434,6 +451,8 @@ impl DecodeService {
             language,
         });
         wake.notify_one();
+        drop(slot);
+        wake_prefetch_ack(&self.prefetch_ack);
     }
 
     pub fn invalidate(&self, generation: u64) {
@@ -447,6 +466,7 @@ impl DecodeService {
         let (lock, wake) = &*self.prefetch_pending;
         *lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
         wake.notify_one();
+        wake_prefetch_ack(&self.prefetch_ack);
     }
 
     fn replace(&self, work: DecodeWork) {
@@ -471,6 +491,7 @@ impl DecodeService {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take();
+        wake_prefetch_ack(&self.prefetch_ack);
         self.pending.1.notify_one();
         self.prefetch_pending.1.notify_one();
         for worker in self.workers.drain(..) {
@@ -491,6 +512,27 @@ fn pending_has_work<T>(pending: &Arc<(Mutex<Option<T>>, Condvar)>) -> bool {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .is_some()
+}
+
+fn wake_prefetch_ack(ack: &Arc<(Mutex<bool>, Condvar)>) {
+    *ack.0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
+    ack.1.notify_all();
+}
+
+fn wait_for_prefetch_ack(ack: &Arc<(Mutex<bool>, Condvar)>, should_cancel: &impl Fn() -> bool) {
+    let mut waiting = ack
+        .0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    while *waiting && !should_cancel() {
+        let (next, _) = ack
+            .1
+            .wait_timeout(waiting, Duration::from_millis(10))
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        waiting = next;
+    }
 }
 
 fn post_load(
@@ -546,6 +588,45 @@ impl Drop for ActiveWork {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefetch_results_are_delivered_one_at_a_time() {
+        let alive = Arc::new(AtomicBool::new(true));
+        let mut loader = DecodeService::new(alive.clone());
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/kgen-view-logo.png");
+        loader.invalidate(1);
+        let target = || DecodeTarget {
+            path: path.clone(),
+            archive_member: None,
+        };
+        loader.submit_prefetch(
+            1,
+            vec![target(), target()],
+            HWND::default(),
+            Language::Spanish,
+        );
+
+        let start = std::time::Instant::now();
+        let mut received = 0;
+        while received < 2 {
+            if let Some(payload) = loader.take_prefetch() {
+                assert_eq!(payload.generation, 1);
+                assert!(payload.result.is_ok());
+                received += 1;
+                loader.ack_prefetch();
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "prefetch worker did not deliver both results"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        alive.store(false, Ordering::Release);
+        loader.shutdown();
+    }
+
     #[test]
     fn rapid_navigation_keeps_the_latest_generation_and_shuts_down_cleanly() {
         let alive = Arc::new(AtomicBool::new(true));

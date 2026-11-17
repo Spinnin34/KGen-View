@@ -272,6 +272,7 @@ pub(super) unsafe extern "system" fn window_proc(
         WM_PREFETCH_DONE => {
             if let Some(payload) = state.loader.take_prefetch() {
                 state.accept_prefetch(payload);
+                state.loader.ack_prefetch();
             }
             LRESULT(0)
         }

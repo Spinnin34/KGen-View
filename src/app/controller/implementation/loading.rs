@@ -14,6 +14,12 @@ impl AppState {
         path: PathBuf,
         initial_archive_member: Option<String>,
     ) {
+        // Keep a completed look-ahead result if its wakeup is still queued
+        // when the user navigates again.
+        if let Some(payload) = self.loader.take_prefetch() {
+            self.accept_prefetch(payload);
+            self.loader.ack_prefetch();
+        }
         let opening_archive = archive::is_archive_path(&path);
         let known_archive = if opening_archive {
             None
@@ -35,6 +41,7 @@ impl AppState {
         };
         self.generation = self.generation.wrapping_add(1);
         self.load_started = Some(Instant::now());
+        self.first_visible_cache_hit = false;
         let generation = self.generation;
         // Invalidate active/queued background work even when this target is
         // already cached and no replacement decode or catalog scan is needed.
@@ -93,6 +100,7 @@ impl AppState {
         });
         if let Some(document) = cached_document {
             self.load_time_ms = 0;
+            self.first_visible_cache_hit = true;
             self.first_visible = self.load_started.take();
             let mut catalog = self.catalog.clone();
             let is_same_folder = catalog.files.first().and_then(|p| p.parent()) == path.parent();
@@ -319,11 +327,11 @@ impl AppState {
         if unsafe { IsIconic(self.hwnd).as_bool() } {
             return;
         }
-        // Keep one bounded adjacent image ready so normal navigation is warm
-        // from the first open; speculative work runs on its own worker.
-        let offset = if self.navigation_direction < 0 { -1 } else { 1 };
-        let candidates: Vec<DecodeTarget> = [offset]
-            .into_iter()
+        // Keep the next two bounded previews ready in the current direction.
+        // At 1920x1080 they fit inside the existing 16 MiB cache budget.
+        let direction = if self.navigation_direction < 0 { -1 } else { 1 };
+        let candidates: Vec<DecodeTarget> = (1..=2)
+            .map(|step| direction * step)
             .filter_map(|offset| self.adjacent_image_path(offset))
             .filter(|path| self.active_path.as_ref() != Some(path))
             .filter(|path| !self.cache.iter().any(|(cached, _)| cached == path))

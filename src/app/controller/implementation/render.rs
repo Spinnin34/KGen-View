@@ -250,7 +250,12 @@ impl AppState {
             self.chrome.reset_render_resources();
         } else {
             if let Some(started) = self.first_visible.take() {
-                crate::diagnostics::elapsed("first_visible", started.elapsed());
+                let stage = if self.first_visible_cache_hit {
+                    "first_visible_cache_hit"
+                } else {
+                    "first_visible_cold"
+                };
+                crate::diagnostics::elapsed(stage, started.elapsed());
             }
             unsafe {
                 crate::ui::status::draw(hdc, &layout, &status, self.settings.is_dark());

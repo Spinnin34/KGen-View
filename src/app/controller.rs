@@ -216,6 +216,7 @@ struct AppState {
     bitmaps: Vec<BitmapTile>,
     bitmap_size: (u32, u32),
     first_visible: Option<Instant>,
+    first_visible_cache_hit: bool,
     bitmap_dirty: bool,
     view_request: u64,
     view_pending: bool,
