@@ -2,15 +2,16 @@ param(
     [Parameter(Mandatory = $true)][string]$BuildId,
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$ReleaseTag,
-    [Parameter(Mandatory = $true)][ValidateSet('beta', 'stable')][string]$Channel
+    [Parameter(Mandatory = $true)][ValidateSet('beta', 'stable')][string]$Channel,
+    [string]$DistDirectory = (Join-Path $PSScriptRoot '..\dist')
 )
 
 $ErrorActionPreference = 'Stop'
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DistDirectory = Join-Path $ProjectRoot 'dist'
 $InstallerPath = Join-Path $DistDirectory 'KGenView-Setup-x64.exe'
 $PortablePath = Join-Path $DistDirectory 'KGenView.exe'
-foreach ($path in @($InstallerPath, $PortablePath)) {
+$PortableZip = Join-Path $DistDirectory 'KGenView-Portable-x64.zip'
+$Artifacts = @($InstallerPath, $PortablePath, $PortableZip)
+foreach ($path in $Artifacts) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "No se encontró el artefacto de release: $path"
     }
@@ -37,7 +38,7 @@ $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $ManifestJson = $Manifest | ConvertTo-Json -Depth 4
 [System.IO.File]::WriteAllText((Join-Path $DistDirectory 'update.json'), $ManifestJson + "`n", $Utf8NoBom)
 
-$Checksums = foreach ($path in @($InstallerPath, $PortablePath, (Join-Path $DistDirectory 'update.json'))) {
+$Checksums = foreach ($path in ($Artifacts + (Join-Path $DistDirectory 'update.json'))) {
     $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([System.IO.Path]::GetFileName($path))"
 }

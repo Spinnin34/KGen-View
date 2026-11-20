@@ -9,6 +9,7 @@ impl AppState {
             hwnd: HWND::default(),
             settings,
             document: None,
+            video: None,
             export_formats: None,
             selected_export_format: 0,
             active_path: None,

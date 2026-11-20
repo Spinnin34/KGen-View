@@ -11,6 +11,8 @@ Visor generalista para equipos de 4–8 GB, con fotografía de hasta 60 MP como 
 - `resources`: reservas CPU/GPU compartidas y buffers de píxeles inmutables con copia al modificar. Clonar un documento o una instantánea no duplica sus píxeles.
 - `mailbox`: un resultado pendiente por servicio; reemplazo y cierre liberan los objetos. Los mensajes Win32 notifican disponibilidad y no transportan punteros propietarios.
 
+El reproductor carga LibVLC en un trabajador solo al abrir un vídeo. LibVLC gestiona el reloj de audio y vídeo, decodifica por hardware cuando está disponible y presenta los fotogramas en una ventana hija. El visor actualiza los controles hasta cuatro veces por segundo y no copia fotogramas al caché de imágenes. Volver a una foto detiene el reproductor y libera el motor en el trabajador. La precarga sigue reservada a las imágenes.
+
 La navegación conserva únicamente la petición pendiente más reciente. Los cambios de rueda a imágenes que aún no están en caché se agrupan durante 24 ms; los aciertos de caché siguen siendo inmediatos. La precarga secuencial mantiene hasta dos vistas previas en la dirección actual y entrega cada resultado a la interfaz antes de continuar. El caché mantiene su límite de 16 MiB. Los formatos compatibles precargan fuentes de hasta 64 MiB; SVG se limita a 512 KiB, GIF no se precarga y JPEG XL se limita a 16 MiB y 4 MP. Los miembros ZIP conservan el máximo de extracción de 512 MiB. Las escrituras explícitas usan un servicio que rechaza operaciones solapadas; conversión y guardado comparten además un cerrojo de exportación. El guardado se aplica a la ventana solo si coinciden documento y revisión. La navegación o el cierre solicitados durante un guardado continúan después de completarlo correctamente.
 
 Las transformaciones geométricas se componen en una correspondencia entre coordenadas de pantalla, imagen editada y fuente original. WIC recibe el recorte y la orientación resultantes; las fotografías compatibles se exportan desde esa cadena sin crear primero una copia CPU completa. JPEG convierte la transparencia sobre blanco en bloques de filas.
@@ -60,6 +62,8 @@ Remove-Item Env:\KGEN_PERF
 ```
 
 El diagnóstico es local y optativo. Registra etapas y consumo reservado, sin rutas ni metadatos de las imágenes. `archive_index` y `archive_extract` miden el indexado del ZIP y la extracción de cada miembro; `first_visible_cache_hit` y `first_visible_cold` miden desde la petición hasta completar el primer dibujo, separando aciertos de caché de cargas en frío. También se registran decodificación, reducción nativa, copia de píxeles, subida a GPU y exportación.
+
+Para vídeo, usa la compilación con la carpeta `vlc` junto al ejecutable y registra `video_output_ready`. El marcador incluye hasta 250 ms de intervalo de muestreo y confirma que LibVLC ha creado la salida de vídeo. Para comparar el consumo, mide el tiempo de CPU, la memoria privada y el motor de decodificación GPU de todo el proceso durante el mismo tramo del mismo vídeo. Las reservas de imágenes de `KGEN_PERF` no contabilizan las asignaciones internas de LibVLC.
 
 Para medir apertura y navegación de un archivo, repite la captura con un `.zip` o `.cbz` representativo y compara `archive_index`, `archive_extract`, `decode`, `first_visible_cache_hit` y `first_visible_cold` entre ejecuciones.
 

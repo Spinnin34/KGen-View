@@ -87,8 +87,8 @@ jobs:
           $channel = '${{ steps.metadata.outputs.channel }}'
           $version = '${{ steps.metadata.outputs.version }}'
           $title = if ($channel -eq 'stable') { "KGen View v$version" } else { "KGen View $version beta $env:GITHUB_RUN_NUMBER" }
-          $notes = "Canal: $channel`nBuild: $env:GITHUB_SHA`n`nDescarga el instalador para actualizar la copia instalada."
-          $arguments = @('release', 'create', $tag, 'dist/KGenView-Setup-x64.exe', 'dist/KGenView.exe', 'dist/update.json', 'dist/SHA256SUMS.txt', '--title', $title, '--notes', $notes)
+          $notes = "Canal: $channel`nBuild: $env:GITHUB_SHA`n`nDescarga el instalador para actualizar la copia instalada. El ZIP portátil incluye el motor de vídeo."
+          $arguments = @('release', 'create', $tag, 'dist/KGenView-Setup-x64.exe', 'dist/KGenView-Portable-x64.zip', 'dist/KGenView.exe', 'dist/update.json', 'dist/SHA256SUMS.txt', '--title', $title, '--notes', $notes)
           if ($channel -eq 'beta') {
             $arguments += @('--prerelease', '--target', $env:GITHUB_SHA)
           } else {

@@ -8,6 +8,7 @@ pub mod menu_bar;
 pub mod status;
 pub mod theme;
 pub mod toolbar;
+pub mod video;
 
 use windows::Win32::Graphics::Direct2D::{
     ID2D1Bitmap, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,

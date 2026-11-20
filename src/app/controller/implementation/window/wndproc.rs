@@ -1,4 +1,6 @@
 use super::*;
+use crate::platform::playback::{WM_PLAYBACK, WM_PLAYBACK_CLOSED};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_UP};
 
 pub(super) unsafe extern "system" fn window_proc(
     hwnd: HWND,
@@ -63,6 +65,7 @@ pub(super) unsafe extern "system" fn window_proc(
             }
             state.set_animation_timer();
             state.schedule_view();
+            state.layout_video();
             if let Some(target) = &state.target {
                 let width = loword(lparam.0 as usize) as u32;
                 let height = hiword(lparam.0 as usize) as u32;
@@ -90,6 +93,7 @@ pub(super) unsafe extern "system" fn window_proc(
                     SWP_NOACTIVATE | SWP_NOZORDER,
                 );
                 state.rebuild_menu();
+                state.layout_video();
                 let _ = InvalidateRect(Some(hwnd), None, false);
             }
             LRESULT(0)
@@ -107,7 +111,9 @@ pub(super) unsafe extern "system" fn window_proc(
             let mut ps = PAINTSTRUCT::default();
             unsafe {
                 BeginPaint(hwnd, &mut ps);
-                state.paint(ps.hdc);
+                if !state.paint_video_update(ps.hdc, ps.rcPaint) {
+                    state.paint(ps.hdc);
+                }
                 let _ = EndPaint(hwnd, &ps);
             }
             LRESULT(0)
@@ -164,7 +170,10 @@ pub(super) unsafe extern "system" fn window_proc(
                     SetCapture(hwnd);
                     let _ = InvalidateRect(Some(hwnd), None, false);
                 }
-            } else if point.y >= state.image_area().top && point.y < state.image_area().bottom {
+            } else if !state.click_video(point, &layout)
+                && point.y >= state.image_area().top
+                && point.y < state.image_area().bottom
+            {
                 state.selection_start = Some(point);
                 state.selection_end = Some(point);
                 unsafe {
@@ -282,12 +291,27 @@ pub(super) unsafe extern "system" fn window_proc(
             }
             LRESULT(0)
         }
+        WM_PLAYBACK => {
+            state.accept_video_status();
+            LRESULT(0)
+        }
+        WM_PLAYBACK_CLOSED => {
+            if state.video.as_ref().is_some_and(|view| view.closing) {
+                unsafe {
+                    let _ = DestroyWindow(hwnd);
+                }
+            }
+            LRESULT(0)
+        }
         WM_FOLDER_CHANGED => {
             if let Some(event) = state.folder_watcher.take()
-                && state
-                    .document
-                    .as_ref()
-                    .is_some_and(|document| document.path.parent() == Some(event.folder.as_path()))
+                && let Some(path) = state
+                    .current_path()
+                    .filter(|path| {
+                        path.parent() == Some(event.folder.as_path())
+                            && state.active_archive_member(path).is_none()
+                    })
+                    .map(Path::to_path_buf)
             {
                 unsafe {
                     let _ = KillTimer(Some(hwnd), TIMER_FOLDER_REFRESH);
@@ -304,12 +328,10 @@ pub(super) unsafe extern "system" fn window_proc(
                 state.cache_bytes = 0;
                 if state.load_started.is_some() {
                     state.folder_dirty = true;
-                } else if let Some(document) = &state.document {
-                    state.catalog_loader.submit(
-                        state.generation,
-                        document.path.clone(),
-                        state.hwnd,
-                    );
+                } else {
+                    state
+                        .catalog_loader
+                        .submit(state.generation, path, state.hwnd);
                 }
             }
             LRESULT(0)
@@ -365,30 +387,30 @@ pub(super) unsafe extern "system" fn window_proc(
                     let _ = KillTimer(Some(hwnd), TIMER_VIEW);
                 }
                 state.request_view();
-            } else if wparam.0 == TIMER_SLIDESHOW
+            } else if (wparam.0 == TIMER_SLIDESHOW
                 || (wparam.0 == TIMER_AUTO_ADVANCE
                     && !unsafe { IsIconic(hwnd).as_bool() }
                     && state.load_started.is_none()
                     && !state.file_busy
                     && state.pending_action.is_none()
-                    && state
+                    && (state
                         .document
                         .as_ref()
-                        .is_some_and(|document| !document.dirty))
+                        .is_some_and(|document| !document.dirty)
+                        || state.video().is_some())))
+                && !state.video_in_progress()
             {
                 state.navigate(1);
             } else if wparam.0 == TIMER_FOLDER_REFRESH
                 && state.load_started.is_none()
                 && !unsafe { IsIconic(hwnd).as_bool() }
-                && let Some(document) = &state.document
-                && state.active_archive_member(&document.path).is_none()
+                && let Some(path) = state.current_path()
+                && state.active_archive_member(path).is_none()
             {
-                if folder_modified(&document.path) != state.catalog_stamp {
-                    state.catalog_loader.submit(
-                        state.generation,
-                        document.path.clone(),
-                        state.hwnd,
-                    );
+                if folder_modified(path) != state.catalog_stamp {
+                    state
+                        .catalog_loader
+                        .submit(state.generation, path.to_path_buf(), state.hwnd);
                 }
             } else if wparam.0 == TIMER_AUTO_RESIZE {
                 unsafe {
@@ -427,6 +449,16 @@ pub(super) unsafe extern "system" fn window_proc(
 fn handle_key(state: &mut AppState, key: u32) {
     let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
     let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
+    if state.video().is_some() && !ctrl {
+        match key {
+            k if k == VK_PRIOR.0 as u32 => return state.video_seek_relative(-5_000),
+            k if k == VK_NEXT.0 as u32 => return state.video_seek_relative(5_000),
+            k if k == VK_UP.0 as u32 => return state.video_audio(5, false),
+            k if k == VK_DOWN.0 as u32 => return state.video_audio(-5, false),
+            0x4D => return state.video_audio(0, true),
+            _ => {}
+        }
+    }
     match key {
         k if k == VK_LEFT.0 as u32 => state.navigate(-1),
         k if k == VK_RIGHT.0 as u32 => state.navigate(1),

@@ -17,11 +17,20 @@ impl AppState {
 
     pub(super) fn open_dialog(&mut self) {
         let mut buffer = vec![0u16; 32768];
-        let filter = wide_with_nuls(if self.lang() == Language::Spanish {
-            "Imágenes y archivos ZIP\0*.bmp;*.dib;*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.tif;*.tiff;*.ico;*.webp;*.heic;*.heif;*.jxl;*.jxr;*.wdp;*.hdp;*.dds;*.svg;*.zip;*.cbz\0Todos los archivos\0*.*\0\0"
+        let (media, video, all) = if self.lang() == Language::Spanish {
+            ("Imágenes, vídeos y ZIP", "Vídeos", "Todos los archivos")
         } else {
-            "Images and ZIP archives\0*.bmp;*.dib;*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.tif;*.tiff;*.ico;*.webp;*.heic;*.heif;*.jxl;*.jxr;*.wdp;*.hdp;*.dds;*.svg;*.zip;*.cbz\0All files\0*.*\0\0"
-        });
+            ("Images, videos and ZIP", "Videos", "All files")
+        };
+        let images = "*.bmp;*.dib;*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.tif;*.tiff;*.ico;*.webp;*.heic;*.heif;*.jxl;*.jxr;*.wdp;*.hdp;*.dds;*.svg;*.zip;*.cbz";
+        let videos = crate::catalog::VIDEO_EXTENSIONS
+            .iter()
+            .map(|extension| format!("*.{extension}"))
+            .collect::<Vec<_>>()
+            .join(";");
+        let filter = wide_with_nuls(&format!(
+            "{media}\0{images};{videos}\0{video}\0{videos}\0{all}\0*.*\0\0"
+        ));
         let mut dialog = OPENFILENAMEW {
             lStructSize: size_of::<OPENFILENAMEW>() as u32,
             hwndOwner: self.hwnd,

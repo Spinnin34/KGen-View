@@ -1,6 +1,13 @@
 use super::*;
 
 impl AppState {
+    pub(super) fn current_path(&self) -> Option<&Path> {
+        self.document
+            .as_ref()
+            .map(|doc| doc.path.as_path())
+            .or(self.active_path.as_deref())
+    }
+
     pub(super) fn active_archive_member<'a>(
         &'a self,
         path: &Path,
@@ -75,10 +82,7 @@ impl AppState {
             .is_some_and(|(generation, path)| {
                 *generation == payload.generation && path == &payload.path
             });
-        let is_active_document = self
-            .document
-            .as_ref()
-            .is_some_and(|document| document.path == payload.path);
+        let is_active_document = self.current_path() == Some(payload.path.as_path());
         if !is_pending_request && !is_active_document {
             return;
         }
@@ -91,7 +95,7 @@ impl AppState {
             return;
         }
         self.update_status(None);
-        if self.prefetch_enabled {
+        if self.prefetch_enabled && self.video().is_none() {
             self.start_prefetch();
         }
     }
@@ -201,10 +205,10 @@ impl AppState {
     }
 
     pub(super) fn update_title(&self) {
-        let title = self.document.as_ref().map_or_else(
+        let title = self.active_path.as_deref().map_or_else(
             || "KGen View".into(),
-            |document| {
-                if let Some((archive, member)) = self.active_archive_member(&document.path) {
+            |path| {
+                if let Some((archive, member)) = self.active_archive_member(path) {
                     let archive_name = archive
                         .source_path()
                         .file_name()
@@ -212,9 +216,7 @@ impl AppState {
                         .to_string_lossy();
                     format!("{archive_name} — {member} — KGen View")
                 } else {
-                    document
-                        .path
-                        .file_name()
+                    path.file_name()
                         .map(|name| format!("{} — KGen View", name.to_string_lossy()))
                         .unwrap_or_else(|| "KGen View".into())
                 }
@@ -312,9 +314,13 @@ impl AppState {
     pub(super) fn perform_action(&mut self, action: PendingAction) {
         match action {
             PendingAction::Load(path) => self.start_load(path),
-            PendingAction::Close => unsafe {
-                let _ = DestroyWindow(self.hwnd);
-            },
+            PendingAction::Close => {
+                if !self.close_video() {
+                    unsafe {
+                        let _ = DestroyWindow(self.hwnd);
+                    }
+                }
+            }
         }
     }
     pub(super) fn request_leave(&mut self, action: PendingAction) {

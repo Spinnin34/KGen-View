@@ -130,7 +130,11 @@ impl AppState {
                 let _ = GetWindowRect(self.hwnd, &mut self.saved_rect);
                 self.saved_style = WINDOW_STYLE(GetWindowLongPtrW(self.hwnd, GWL_STYLE) as u32);
                 self.fullscreen = true;
-                SetWindowLongPtrW(self.hwnd, GWL_STYLE, (WS_POPUP | WS_VISIBLE).0 as isize);
+                SetWindowLongPtrW(
+                    self.hwnd,
+                    GWL_STYLE,
+                    (WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN).0 as isize,
+                );
                 let monitor = MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST);
                 let mut info = MONITORINFO {
                     cbSize: size_of::<MONITORINFO>() as u32,
@@ -162,6 +166,7 @@ impl AppState {
             }
         }
         self.set_zoom(ZoomMode::Fit);
+        self.layout_video();
         unsafe {
             let _ = InvalidateRect(Some(self.hwnd), None, false);
         }

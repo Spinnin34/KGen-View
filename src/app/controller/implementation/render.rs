@@ -29,6 +29,7 @@ impl AppState {
             rect,
             self.fullscreen,
             self.update_available.is_some(),
+            self.video().is_some(),
         )
     }
 
@@ -258,6 +259,7 @@ impl AppState {
                 crate::diagnostics::elapsed(stage, started.elapsed());
             }
             unsafe {
+                self.draw_video_bar(hdc, &layout);
                 crate::ui::status::draw(hdc, &layout, &status, self.settings.is_dark());
             }
         }

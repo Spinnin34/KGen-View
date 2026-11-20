@@ -33,7 +33,7 @@ impl FolderCatalog {
             }
             let Ok(entry) = entry else { continue };
             let path = entry.path();
-            if !is_supported(&path) {
+            if !is_supported(&path) && !is_video(&path) {
                 continue;
             }
             let Ok(file_type) = entry.file_type() else {
@@ -113,6 +113,22 @@ pub fn is_supported(path: &Path) -> bool {
                 .any(|extension| value.eq_ignore_ascii_case(extension))
         })
         .unwrap_or(false)
+}
+
+pub const VIDEO_EXTENSIONS: &[&str] = &[
+    "3g2", "3gp", "3gpp", "asf", "avi", "divx", "dv", "f4v", "flv", "h264", "h265", "hevc", "m1v",
+    "m2p", "m2t", "m2ts", "m2v", "m4v", "mkv", "mov", "mp4", "mpe", "mpeg", "mpg", "mpv", "mts",
+    "mxf", "nsv", "nut", "ogm", "ogv", "rm", "rmvb", "ts", "vob", "webm", "wmv", "wtv", "y4m",
+];
+
+pub fn is_video(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| {
+            VIDEO_EXTENSIONS
+                .iter()
+                .any(|extension| value.eq_ignore_ascii_case(extension))
+        })
 }
 
 fn display_name(path: &Path) -> String {

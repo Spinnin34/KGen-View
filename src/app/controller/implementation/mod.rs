@@ -13,6 +13,8 @@ mod state;
 mod status;
 mod update;
 mod utils;
+mod video;
 mod view;
 mod window;
+pub(super) use video::VideoView;
 pub use window::{fatal_error, run};

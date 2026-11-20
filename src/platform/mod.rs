@@ -5,6 +5,7 @@ pub mod clipboard;
 pub mod conversion_dialog;
 pub mod imgbb;
 pub mod menu;
+pub mod playback;
 pub mod properties_dialog;
 pub mod screenshot;
 pub mod text;

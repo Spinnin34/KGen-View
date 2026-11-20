@@ -14,6 +14,9 @@ impl AppState {
         path: PathBuf,
         initial_archive_member: Option<String>,
     ) {
+        if self.video.as_ref().is_some_and(|view| view.closing) {
+            return;
+        }
         self.cancel_wheel_navigation();
         // Keep a completed look-ahead result if its wakeup is still queued
         // when the user navigates again.
@@ -92,6 +95,11 @@ impl AppState {
             self.catalog_loader
                 .submit(generation, path.clone(), self.hwnd);
         }
+        if !opening_archive && !is_archive_member && crate::catalog::is_video(&path) {
+            self.start_video(path);
+            return;
+        }
+        self.stop_video();
 
         let cached_index = self.cache.iter().position(|(cached, _)| *cached == path);
         let cached_document = cached_index.map(|index| {
@@ -347,6 +355,9 @@ impl AppState {
                 {
                     return None;
                 }
+                if archive_member.is_none() && crate::catalog::is_video(&path) {
+                    return None;
+                }
                 Some(DecodeTarget {
                     path,
                     archive_member,
@@ -396,13 +407,13 @@ impl AppState {
     }
 
     pub(super) fn refresh_restart_registration(&self) {
-        let Some(document) = &self.document else {
+        let Some(path) = self.current_path() else {
             return;
         };
         let archive_member = self
-            .active_archive_member(&document.path)
+            .active_archive_member(path)
             .map(|(archive, member)| (archive.source_path(), member));
-        updater::register_restart(Some(&document.path), archive_member);
+        updater::register_restart(Some(path), archive_member);
     }
 
     pub(super) fn cache_document(&mut self, path: PathBuf, document: ImageDocument) {

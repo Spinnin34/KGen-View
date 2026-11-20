@@ -193,6 +193,7 @@ struct AppState {
     hwnd: HWND,
     settings: Settings,
     document: Option<ImageDocument>,
+    video: Option<Box<implementation::VideoView>>,
     export_formats: Option<Vec<crate::imaging::ExportFormat>>,
     selected_export_format: usize,
     active_path: Option<PathBuf>,

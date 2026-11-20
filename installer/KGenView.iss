@@ -39,8 +39,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\dist\KGenView.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#KGenExecutable}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\target\filetype-icons\*.ico"; DestDir: "{app}\icons"; Flags: ignoreversion
+Source: "{#VideoRuntime}\*"; DestDir: "{app}\vlc"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{group}\KGen View"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "KGen.View"
@@ -50,7 +51,7 @@ Name: "{autodesktop}\KGen View"; Filename: "{app}\{#MyAppExeName}"; AppUserModel
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\KGenView.exe"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "KGen View"; ValueData: "Software\KGenView\Capabilities"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\KGenView\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "KGen View"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\KGenView\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "Visor de imágenes nativo, rápido y compacto"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "Visor de imágenes y vídeo para Windows"
 
 Root: HKCU; Subkey: "Software\Classes\KGenView.bmp"; ValueType: string; ValueName: ""; ValueData: "Imagen BMP de KGen View"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\KGenView.bmp\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\icons\bmp.ico"
@@ -88,6 +89,9 @@ Root: HKCU; Subkey: "Software\Classes\KGenView.svg\shell\open\command"; ValueTyp
 Root: HKCU; Subkey: "Software\Classes\KGenView.Archive"; ValueType: string; ValueName: ""; ValueData: "Archivo ZIP de imágenes"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\KGenView.Archive\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
 Root: HKCU; Subkey: "Software\Classes\KGenView.Archive\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\KGenView.Video"; ValueType: string; ValueName: ""; ValueData: "Vídeo de KGen View"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\KGenView.Video\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKCU; Subkey: "Software\Classes\KGenView.Video\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 Root: HKCU; Subkey: "Software\Classes\Applications\KGenView.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "KGen View"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\KGenView.exe\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
@@ -112,6 +116,20 @@ Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".svg"; ValueData: "KGenView.svg"
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".zip"; ValueData: "KGenView.Archive"
 Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".cbz"; ValueData: "KGenView.Archive"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".3gp"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".avi"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".flv"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".m2ts"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".m4v"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mkv"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mov"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mp4"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mpeg"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mpg"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ogv"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ts"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".webm"; ValueData: "KGenView.Video"
+Root: HKCU; Subkey: "Software\KGenView\Capabilities\FileAssociations"; ValueType: string; ValueName: ".wmv"; ValueData: "KGenView.Video"
 
 Root: HKCU; Subkey: "Software\Classes\.bmp\OpenWithProgids"; ValueType: none; ValueName: "KGenView.bmp"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.dib\OpenWithProgids"; ValueType: none; ValueName: "KGenView.bmp"; Flags: uninsdeletevalue
@@ -130,6 +148,20 @@ Root: HKCU; Subkey: "Software\Classes\.jxl\OpenWithProgids"; ValueType: none; Va
 Root: HKCU; Subkey: "Software\Classes\.svg\OpenWithProgids"; ValueType: none; ValueName: "KGenView.svg"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.zip\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Archive"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.cbz\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Archive"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.3gp\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.avi\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.flv\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.m2ts\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.m4v\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.mkv\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.mov\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.mp4\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.mpeg\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.mpg\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.ogv\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.ts\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.webm\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.wmv\OpenWithProgids"; ValueType: none; ValueName: "KGenView.Video"; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,KGen View}"; Flags: nowait postinstall skipifsilent

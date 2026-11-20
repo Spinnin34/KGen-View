@@ -104,13 +104,16 @@ impl AppState {
             cmd::AUTO_INTERVAL_3000_MS => self.set_auto_advance_interval(3_000),
             cmd::AUTO_INTERVAL_5000_MS => self.set_auto_advance_interval(5_000),
             cmd::PAUSE_ANIMATION => {
-                self.animation_playing = !self.animation_playing;
-                self.set_animation_timer();
-                self.update_status(None);
+                if self.video().is_some() {
+                    self.video_pause();
+                } else {
+                    self.animation_playing = !self.animation_playing;
+                    self.set_animation_timer();
+                    self.update_status(None);
+                }
             }
             cmd::RELOAD => {
-                if let Some(doc) = &self.document {
-                    let path = doc.path.clone();
+                if let Some(path) = self.current_path().map(Path::to_path_buf) {
                     self.cache.clear();
                     self.cache_bytes = 0;
                     self.request_leave(PendingAction::Load(path));

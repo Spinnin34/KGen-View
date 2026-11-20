@@ -187,8 +187,8 @@ impl AppState {
     }
 
     pub(super) fn copy_path(&self) {
-        if let Some(doc) = &self.document {
-            copy_text(self.hwnd, &self.display_file_location(&doc.path));
+        if let Some(path) = self.current_path() {
+            copy_text(self.hwnd, &self.display_file_location(path));
         }
     }
 
@@ -276,11 +276,13 @@ impl AppState {
     }
 
     pub(super) fn open_folder(&self) {
-        let Some(doc) = &self.document else { return };
+        let Some(current) = self.current_path() else {
+            return;
+        };
         let path = self
-            .active_archive_member(&doc.path)
+            .active_archive_member(current)
             .map(|(archive, _)| archive.source_path())
-            .unwrap_or(&doc.path);
+            .unwrap_or(current);
         let argument = format!("/select,\"{}\"", path.display());
         let argument = wide(&argument);
         unsafe {

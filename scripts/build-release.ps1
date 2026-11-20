@@ -1,11 +1,12 @@
 param(
     [switch]$SkipValidation,
-    [string]$BuildId = $env:KGEN_BUILD_ID
+    [string]$BuildId = $env:KGEN_BUILD_ID,
+    [string]$DistDirectory = (Join-Path $PSScriptRoot '..\dist')
 )
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$DistDirectory = Join-Path $ProjectRoot 'dist'
+$DistDirectory = [IO.Path]::GetFullPath($DistDirectory)
 $CargoManifest = Join-Path $ProjectRoot 'Cargo.toml'
 $CargoVersionLine = Select-String -LiteralPath $CargoManifest -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
 if (-not $CargoVersionLine) {
@@ -80,6 +81,9 @@ try {
     $ExecutablePath = Join-Path $DistDirectory 'KGenView.exe'
     Copy-Item -LiteralPath (Join-Path $ProjectRoot 'target\release\kgen-view.exe') -Destination $ExecutablePath -Force
     Sign-ReleaseFile $ExecutablePath
+    $VideoRuntime = & (Join-Path $PSScriptRoot 'prepare-video-runtime.ps1')
+    $PortableZip = Join-Path $DistDirectory 'KGenView-Portable-x64.zip'
+    Compress-Archive -LiteralPath @($ExecutablePath, $VideoRuntime) -DestinationPath $PortableZip -Force
 
     $InnoCandidates = @(
         (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
@@ -89,7 +93,7 @@ try {
     if (-not $InnoCompiler) {
         throw 'Inno Setup 6 no está instalado. Instálalo con: winget install --id JRSoftware.InnoSetup -e'
     }
-    & $InnoCompiler "/DMyAppVersion=$PackageVersion" (Join-Path $ProjectRoot 'installer\KGenView.iss')
+    & $InnoCompiler "/DMyAppVersion=$PackageVersion" "/DKGenExecutable=$ExecutablePath" "/DVideoRuntime=$VideoRuntime" "/O$DistDirectory" (Join-Path $ProjectRoot 'installer\KGenView.iss')
     if ($LASTEXITCODE -ne 0) { throw 'La compilación del instalador falló' }
     Sign-ReleaseFile (Join-Path $DistDirectory 'KGenView-Setup-x64.exe')
 }

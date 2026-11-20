@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  Visor de imágenes nativo para Windows, rápido, compacto y sin distracciones.
+  Visor nativo de imágenes y vídeo para Windows.
 </p>
 
 <p align="center">
@@ -26,7 +26,8 @@ KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está constr
 - Modo oscuro, modo claro y seguimiento del tema del sistema.
 - Cambio de idioma entre español e inglés.
 - Arrastrar y soltar, apertura desde el Explorador y apertura por línea de comandos.
-- Navegación circular por las imágenes de la carpeta, con orden natural para nombres como `imagen2.png` e `imagen10.png`.
+- Navegación circular por las imágenes y los vídeos de la carpeta, con orden natural para nombres como `imagen2.png` e `imagen10.png`.
+- Reproducción de vídeos locales con sonido, pausa, búsqueda, volumen, silencio y pantalla completa.
 - Apertura de archivos ZIP y CBZ: indexado rápido y extracción bajo demanda mientras se navega por las imágenes.
 - Al abrir desde el Explorador una imagen dentro de un ZIP, carga el archivo completo y se sitúa en esa imagen.
 - Redimensionado automático de la ventana para aprovechar el espacio disponible.
@@ -70,6 +71,10 @@ KGen View abre directamente los siguientes formatos:
 
 WebP y HEIF/HEIC dependen de los codecs instalados en Windows. JPEG XL se decodifica dentro de KGen View, sin necesitar un codec adicional del sistema. La aplicación muestra un aviso cuando falta un codec necesario para WebP o HEIF/HEIC.
 
+### Vídeo
+
+El instalador y el ZIP portátil incluyen LibVLC 3 para reproducir archivos locales como MP4, MKV, WebM, MOV, AVI, WMV, MPEG, M2TS, FLV, OGV y 3GP. La compatibilidad depende del códec de las pistas y del contenedor. LibVLC usa decodificación por hardware cuando el códec, la GPU y el controlador son compatibles, y puede decodificar por software en los demás casos. La carpeta `vlc` incluye los avisos de licencia y enlaces al código fuente de VideoLAN.
+
 ### Exportación
 
 En **Editar → Convertir formato**, elige uno de los formatos que Windows tiene disponibles mediante WIC en ese equipo. La lista puede incluir PNG, JPEG, BMP, TIFF, GIF, JPEG XR y otros formatos si hay un codificador instalado. La ventana permite guardar una copia sin cambiar el archivo abierto y muestra una animación mientras se convierte. En imágenes animadas o documentos multipágina se exporta el fotograma visible.
@@ -82,10 +87,10 @@ Activa **Opciones -> Activar captura rectangular** para habilitar la captura. Ca
 
 | Acción | Atajo |
 |---|---|
-| Abrir imagen | `Ctrl + O` |
+| Abrir archivo | `Ctrl + O` |
 | Guardar como | `Ctrl + Shift + S` |
-| Imagen anterior / siguiente | `←` / `→` |
-| Primera / última imagen de la carpeta | `Inicio` / `Fin` |
+| Archivo anterior / siguiente | `←` / `→` |
+| Primer / último archivo de la carpeta | `Inicio` / `Fin` |
 | Navegar con la rueda | `Rueda del ratón` |
 | Acercar / alejar | `Ctrl + rueda`, `+` / `-` |
 | Tamaño real | `1` |
@@ -94,7 +99,10 @@ Activa **Opciones -> Activar captura rectangular** para habilitar la captura. Ca
 | Copiar imagen | `Ctrl + C` |
 | Deshacer / rehacer | `Ctrl + Z` / `Ctrl + Y` |
 | Fotograma o página anterior / siguiente | `RePág` / `AvPág` |
-| Pausar o reanudar animación | `Espacio` |
+| Pausar o reanudar vídeo o animación | `Espacio` |
+| Retroceder o avanzar 5 segundos en un vídeo | `RePág` / `AvPág` |
+| Subir o bajar el volumen del vídeo | `↑` / `↓` |
+| Silenciar o recuperar el sonido del vídeo | `M` |
 | Presentación | `F5` |
 | Recargar imagen | `F9` |
 | Captura rectangular (si esta activada) | `Ctrl + Win + Z` (configurable) |
@@ -105,18 +113,19 @@ Activa **Opciones -> Activar captura rectangular** para habilitar la captura. Ca
 
 ## Instalación
 
-Las instalaciones hechas con el instalador comprueban GitHub al abrirse. Cada subida a `main` publica una beta que se ofrece a todos; las etiquetas `vX.Y.Z` publican versiones estables. Si hay una versión nueva, pulsa el botón de descarga de la barra para descargarla y aplicarla. La app verifica el SHA-256 antes de abrir el instalador. La versión portable se actualiza descargando su ejecutable desde GitHub.
+Las instalaciones hechas con el instalador comprueban GitHub al abrirse. Cada subida a `main` publica una beta que se ofrece a todos; las etiquetas `vX.Y.Z` publican versiones estables. Si hay una versión nueva, pulsa el botón de descarga de la barra para descargarla y aplicarla. La app verifica el SHA-256 antes de abrir el instalador. Para actualizar la versión portátil, descarga y extrae el ZIP de la nueva publicación.
 
-La forma recomendada para distribuir KGen View es el instalador `KGenView-Setup-x64.exe`. El instalador no necesita permisos de administrador: se instala en el perfil del usuario y puede registrar las asociaciones de archivos para BMP, JPEG, PNG, GIF, TIFF, ICO, WebP, HEIF/HEIC, SVG, ZIP y CBZ.
+El instalador `KGenView-Setup-x64.exe` instala la aplicación en el perfil del usuario sin permisos de administrador y la ofrece en **Abrir con** para imágenes, ZIP, CBZ y formatos de vídeo como MP4, MKV, WebM, MOV y AVI.
 
 Si estás usando una compilación local, el script de release genera estos archivos en `dist\`:
 
 ```text
 dist\KGenView.exe
+dist\KGenView-Portable-x64.zip
 dist\KGenView-Setup-x64.exe
 ```
 
-También puedes ejecutar `KGenView.exe` como versión portable sin instalarlo.
+Para usar el vídeo sin instalar la aplicación, extrae `KGenView-Portable-x64.zip` y abre `KGenView.exe` con la carpeta `vlc` a su lado. El ejecutable suelto sigue disponible para abrir imágenes.
 
 ## Compilación desde el código fuente
 

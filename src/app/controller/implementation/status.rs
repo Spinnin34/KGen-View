@@ -30,6 +30,19 @@ impl AppState {
                 date: Some(file_time),
                 message: None,
             }
+        } else if self.video().is_some() {
+            StatusModel {
+                primary: if self.lang() == Language::Spanish {
+                    "Vídeo"
+                } else {
+                    "Video"
+                }
+                .into(),
+                position: self
+                    .image_position()
+                    .map(|(index, count)| format!("{index}/{count}")),
+                ..StatusModel::default()
+            }
         } else {
             StatusModel::message(tr(self.lang(), Text::NoImage))
         };
