@@ -142,7 +142,7 @@ impl AppState {
             }
             cmd::ABOUT => {
                 let about = format!(
-                    "KGen View {}\n\nVisor nativo para Windows\nRust + WIC + Direct2D\nLicencia MIT\n\nSin telemetría. Las instalaciones comprueban actualizaciones en GitHub al iniciar y cada 15 minutos mientras la app está abierta. Las copias portables no reciben instalación automática; descarga la actualización solo cuando pulsas el botón. Copiar enlace usa ImgBB.",
+                    "KGen View {}\n\nVisor nativo para Windows\nRust + WIC + Direct2D\nLicencia MIT\n\nSin telemetría. Las instalaciones y copias portables comprueban actualizaciones en GitHub al iniciar y cada 15 minutos mientras la app está abierta. En copias portables, el botón abre GitHub para descargar manualmente; no se instalan actualizaciones automáticamente. Copiar enlace usa ImgBB.",
                     env!("CARGO_PKG_VERSION")
                 );
                 let text = wide(&about);

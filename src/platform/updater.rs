@@ -55,6 +55,7 @@ pub const WM_UPDATE_EVENT: u32 = WM_APP + 9;
 pub struct UpdateInfo {
     pub version: String,
     pub channel: String,
+    pub release_url: String,
     installer_url: String,
     installer_sha256: String,
     installer_size: u64,
@@ -80,9 +81,6 @@ pub fn start_check(
     alive: Arc<AtomicBool>,
     events: Arc<Mailbox<UpdateEvent>>,
 ) -> Result<(), String> {
-    if !is_installed_copy() {
-        return Ok(());
-    }
     let target = hwnd.0 as usize;
     thread::Builder::new()
         .name("kgen-update-check".into())
@@ -425,6 +423,7 @@ fn check_for_update() -> Result<Option<UpdateInfo>, String> {
     Ok(Some(UpdateInfo {
         version,
         channel: channel.to_string(),
+        release_url: format!("https://github.com/{REPOSITORY}/releases/tag/{tag}"),
         installer_url,
         installer_sha256,
         installer_size,

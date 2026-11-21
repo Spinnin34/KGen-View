@@ -6,7 +6,6 @@ impl AppState {
             || self.update_available.is_some()
             || self.update_download_busy
             || self.install_on_exit.is_some()
-            || !updater::is_installed_copy()
         {
             return;
         }
@@ -76,6 +75,23 @@ impl AppState {
         let Some(update) = self.update_available.clone() else {
             return;
         };
+        if !updater::is_installed_copy() {
+            let url = wide(&update.release_url);
+            let result = unsafe {
+                ShellExecuteW(
+                    None,
+                    w!("open"),
+                    PCWSTR(url.as_ptr()),
+                    PCWSTR::null(),
+                    PCWSTR::null(),
+                    SW_SHOWNORMAL,
+                )
+            };
+            if result.0 as isize <= 32 {
+                self.show_error("No se pudo abrir la página de descargas de GitHub.");
+            }
+            return;
+        }
         self.update_download_busy = true;
         let message = format!(
             "{} {} ({})",
