@@ -1,7 +1,7 @@
 use super::super::video::TIMER_VIDEO_PANEL;
 use super::*;
 use crate::platform::playback::{WM_PLAYBACK, WM_PLAYBACK_CLOSED};
-use crate::ui::video::WM_PANEL_INPUT;
+use crate::ui::video::{WM_PANEL_INPUT, WM_VOLUME_INPUT};
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{VK_DOWN, VK_RETURN, VK_TAB, VK_UP},
     WindowsAndMessaging::{WM_ACTIVATE, WM_MOVE},
@@ -160,6 +160,9 @@ pub(super) unsafe extern "system" fn window_proc(
         }
         WM_MOUSEWHEEL => {
             let delta = hiword(wparam.0) as i16;
+            if state.video_wheel_at(point_from_lparam(lparam), delta) {
+                return LRESULT(0);
+            }
             if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 {
                 if state.video().is_some() {
                     state.video_audio(if delta > 0 { 5 } else { -5 }, false);
@@ -199,7 +202,6 @@ pub(super) unsafe extern "system" fn window_proc(
         }
         WM_MOUSEMOVE => {
             if state.video().is_some() {
-                state.video_tick();
                 return LRESULT(0);
             }
             let point = point_from_lparam(lparam);
@@ -322,6 +324,10 @@ pub(super) unsafe extern "system" fn window_proc(
         }
         WM_PANEL_INPUT => {
             state.video_input(wparam.0 as u32, point_from_lparam(lparam));
+            LRESULT(0)
+        }
+        WM_VOLUME_INPUT => {
+            state.video_volume_input(wparam.0 as u32, point_from_lparam(lparam));
             LRESULT(0)
         }
         WM_PLAYBACK_CLOSED => {

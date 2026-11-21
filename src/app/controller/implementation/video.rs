@@ -1,22 +1,27 @@
 use super::*;
 use crate::{
-    platform::playback::{Control, Phase, Playback, PlaybackStatus, Preferences, report_failure},
-    ui::video::{Action, Hit, Layer, Model, Painter, PanelLayout, RATES, Slider, rate_label},
+    platform::playback::{
+        Control, MAX_VOLUME, Phase, Playback, PlaybackStatus, Preferences, report_failure,
+    },
+    ui::video::{
+        Action, EdgeLayout, EdgeZone, Hit, Layer, LayerKind, Model, Painter, PanelLayout,
+        ProgressLine, RATES, VolumeHit, VolumeLayout, VolumePainter, rate_label,
+    },
 };
 use windows::Win32::UI::{
     HiDpi::GetDpiForWindow,
     WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, DestroyMenu, GA_ROOTOWNER, GetAncestor, GetCursorPos, HMENU,
-        MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, SW_HIDE, TPM_BOTTOMALIGN, TPM_NONOTIFY,
-        TPM_RETURNCMD, TPM_RIGHTALIGN, TrackPopupMenu, WM_CAPTURECHANGED, WS_CHILD, WS_DISABLED,
-        WS_EX_NOPARENTNOTIFY, WindowFromPoint,
+        IsWindowVisible, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, SW_HIDE, TPM_BOTTOMALIGN,
+        TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN, TrackPopupMenu, WM_CAPTURECHANGED, WS_CHILD,
+        WS_DISABLED, WS_EX_NOPARENTNOTIFY, WindowFromPoint,
     },
 };
 
 const SS_BLACKRECT: WINDOW_STYLE = WINDOW_STYLE(4);
 pub(super) const TIMER_VIDEO_PANEL: usize = 9;
-const POINTER_INTERVAL_MS: u32 = 90;
-const HIDE_AFTER: std::time::Duration = std::time::Duration::from_millis(2700);
+const POINTER_INTERVAL_MS: u32 = 70;
+const HIDE_AFTER: std::time::Duration = std::time::Duration::from_millis(2400);
 
 pub(in crate::app::controller) struct VideoView {
     surface: HWND,
@@ -35,26 +40,32 @@ struct VideoPanel {
     layer: Layer,
     painter: Option<Painter>,
     layout: Option<PanelLayout>,
+    edges: Option<EdgeLayout>,
+    progress: Option<ProgressLine>,
+    volume: Option<SidePanel>,
     cursor: Option<POINT>,
-    reveal_until: Instant,
+    zone: EdgeZone,
+    reveal: Reveal,
     hover: Option<Hit>,
-    over_panel: bool,
     focus: Option<Action>,
     pressed: Option<Hit>,
-    drag: Option<(Slider, f32)>,
+    drag: Option<f32>,
     menu_open: bool,
 }
 
 impl VideoPanel {
-    fn new(layer: Layer) -> Self {
+    fn new(layer: Layer, progress: Option<Layer>, volume: Option<Layer>) -> Self {
         Self {
             layer,
             painter: None,
             layout: None,
+            edges: None,
+            progress: progress.map(ProgressLine::new),
+            volume: volume.map(SidePanel::new),
             cursor: None,
-            reveal_until: Instant::now() + HIDE_AFTER,
+            zone: EdgeZone::None,
+            reveal: Reveal::default(),
             hover: None,
-            over_panel: false,
             focus: None,
             pressed: None,
             drag: None,
@@ -62,25 +73,127 @@ impl VideoPanel {
         }
     }
 
-    fn reveal(&mut self) {
-        self.reveal_until = Instant::now() + HIDE_AFTER;
-    }
-
     fn clear_input(&mut self) {
         self.hover = None;
-        self.over_panel = false;
         self.focus = None;
         self.pressed = None;
         self.drag = None;
+        self.zone = EdgeZone::None;
+        self.cursor = None;
+        self.reveal = Reveal::default();
+        if let Some(volume) = &mut self.volume {
+            volume.clear_input();
+        }
     }
 
-    fn wants_visible(&self, pinned: bool) -> bool {
+    fn wants_visible(&self, pinned: bool, now: Instant) -> bool {
         pinned
-            || Instant::now() < self.reveal_until
-            || self.over_panel
+            || self.reveal.visible(now)
             || self.focus.is_some()
             || self.pressed.is_some()
             || self.menu_open
+    }
+}
+
+#[derive(Default)]
+struct Reveal {
+    pointer_until: Option<Instant>,
+    explicit_until: Option<Instant>,
+}
+
+impl Reveal {
+    fn pointer(&mut self, in_zone: bool, motion_or_entry: bool, now: Instant) {
+        if !in_zone {
+            self.pointer_until = None;
+        } else if motion_or_entry {
+            self.pointer_until = Some(now + HIDE_AFTER);
+        }
+    }
+
+    fn show(&mut self) {
+        self.explicit_until = Some(Instant::now() + HIDE_AFTER);
+    }
+
+    fn visible(&self, now: Instant) -> bool {
+        self.pointer_until.is_some_and(|until| now < until)
+            || self.explicit_until.is_some_and(|until| now < until)
+    }
+}
+
+struct SidePanel {
+    layer: Layer,
+    painter: Option<VolumePainter>,
+    layout: Option<VolumeLayout>,
+    last_frame: Option<VolumeFrame>,
+    reveal: Reveal,
+    hover: Option<VolumeHit>,
+    pressed: Option<VolumeHit>,
+}
+
+#[derive(PartialEq)]
+struct VolumeFrame {
+    origin: POINT,
+    size: windows::Win32::Foundation::SIZE,
+    value: i32,
+    muted: bool,
+    hover: Option<VolumeHit>,
+    pressed: Option<VolumeHit>,
+}
+
+impl SidePanel {
+    fn new(layer: Layer) -> Self {
+        Self {
+            layer,
+            painter: None,
+            layout: None,
+            last_frame: None,
+            reveal: Reveal::default(),
+            hover: None,
+            pressed: None,
+        }
+    }
+
+    fn clear_input(&mut self) {
+        self.reveal = Reveal::default();
+        self.hover = None;
+        self.pressed = None;
+    }
+
+    fn wants_visible(&self, now: Instant) -> bool {
+        self.layout.is_some() && (self.reveal.visible(now) || self.pressed.is_some())
+    }
+
+    fn draw(&mut self, owner: HWND, preferences: Preferences) -> Result<(), WinError> {
+        let Some(layout) = self.layout else {
+            return Ok(());
+        };
+        let mut origin = layout.offset;
+        unsafe {
+            let _ = ClientToScreen(owner, &mut origin);
+        }
+        let frame = VolumeFrame {
+            origin,
+            size: layout.size,
+            value: preferences.volume,
+            muted: preferences.muted,
+            hover: self.hover,
+            pressed: self.pressed,
+        };
+        if self.layer.visible && self.last_frame.as_ref() == Some(&frame) {
+            return Ok(());
+        }
+        self.layer.render(origin, layout.size, |target| {
+            VolumePainter::draw(
+                &mut self.painter,
+                target,
+                layout,
+                preferences,
+                self.hover,
+                self.pressed == Some(VolumeHit::Track),
+            )
+        })?;
+        self.last_frame = Some(frame);
+        Ok(())
     }
 }
 
@@ -105,10 +218,18 @@ impl VideoView {
         let playback = Playback::start(hwnd, surface)
             .inspect_err(|error| report_failure("start worker", error.raw_os_error().unwrap_or(0)))
             .ok();
-        let panel = Layer::new(hwnd, factory)
-            .inspect_err(|error| report_failure("create floating controls", error.code().0))
-            .ok()
-            .map(VideoPanel::new);
+        let layer = |kind| {
+            Layer::new(hwnd, factory, kind)
+                .inspect_err(|error| report_failure("create video overlay", error.code().0))
+                .ok()
+        };
+        let panel = layer(LayerKind::Controls).map(|controls| {
+            VideoPanel::new(
+                controls,
+                layer(LayerKind::Progress),
+                layer(LayerKind::Volume),
+            )
+        });
         Ok(Self {
             surface,
             playback,
@@ -130,7 +251,6 @@ impl VideoView {
     fn controls_pinned(&self) -> bool {
         self.failed()
             || self.notice.is_some()
-            || self.status.phase == Phase::Ended
             || (self.status.phase == Phase::Opening && self.status.dimensions.is_none())
     }
 }
@@ -203,7 +323,6 @@ impl AppState {
         });
         if let Some(panel) = &mut view.panel {
             panel.clear_input();
-            panel.reveal();
             unsafe {
                 SetTimer(
                     Some(self.hwnd),
@@ -231,6 +350,16 @@ impl AppState {
                 panel.layer.reset();
                 panel.painter = None;
                 panel.layout = None;
+                panel.edges = None;
+                if let Some(progress) = &mut panel.progress {
+                    progress.reset();
+                }
+                if let Some(volume) = &mut panel.volume {
+                    volume.layer.reset();
+                    volume.painter = None;
+                    volume.layout = None;
+                    volume.last_frame = None;
+                }
                 panel.clear_input();
             }
             unsafe {
@@ -257,6 +386,12 @@ impl AppState {
             view.closing = true;
             if let Some(panel) = &mut view.panel {
                 panel.layer.hide();
+                if let Some(progress) = &mut panel.progress {
+                    progress.hide();
+                }
+                if let Some(volume) = &mut panel.volume {
+                    volume.layer.hide();
+                }
             }
             playback.close();
         }
@@ -301,6 +436,11 @@ impl AppState {
         }
         let scale = unsafe { GetDpiForWindow(self.hwnd) }.max(96) as f32 / 96.0;
         panel.layout = PanelLayout::new(client, scale, self.update_available.is_some());
+        let edges = EdgeLayout::new(client, scale, panel.layout.as_ref());
+        panel.edges = Some(edges);
+        if let Some(volume) = &mut panel.volume {
+            volume.layout = edges.volume();
+        }
         self.render_video_panel();
     }
 
@@ -369,6 +509,10 @@ impl AppState {
             preferences: view.preferences,
             language,
             fullscreen,
+            volume_open: panel
+                .volume
+                .as_ref()
+                .is_some_and(|volume| volume.wants_visible(Instant::now())),
             can_navigate,
             update_busy,
             hover: panel.hover,
@@ -386,9 +530,11 @@ impl AppState {
         let Some(mut panel) = view.panel.take() else {
             return;
         };
-        let foreground =
-            unsafe { GetForegroundWindow() == self.hwnd && !IsIconic(self.hwnd).as_bool() };
-        let show = !view.closing && foreground && panel.wants_visible(view.controls_pinned());
+        let allowed = !view.closing
+            && unsafe { IsWindowVisible(self.hwnd).as_bool() && !IsIconic(self.hwnd).as_bool() };
+        let foreground = allowed && unsafe { GetForegroundWindow() == self.hwnd };
+        let now = Instant::now();
+        let show = foreground && panel.wants_visible(view.controls_pinned(), now);
         if show && let Some(layout) = &panel.layout {
             let model = Self::video_model(
                 view,
@@ -412,6 +558,30 @@ impl AppState {
         } else {
             panel.layer.hide();
         }
+        if let Some(volume) = &mut panel.volume {
+            if foreground && volume.wants_visible(now) {
+                if let Err(error) = volume.draw(self.hwnd, view.preferences) {
+                    report_failure("draw volume controls", error.code().0);
+                    volume.layer.hide();
+                }
+            } else {
+                volume.layer.hide();
+            }
+        }
+        if let Some(progress) = &mut panel.progress {
+            let show = allowed && !panel.layer.visible && !view.failed();
+            if show && let Some((mut origin, size)) = panel.edges.and_then(EdgeLayout::progress) {
+                unsafe {
+                    let _ = ClientToScreen(self.hwnd, &mut origin);
+                }
+                if let Err(error) = progress.draw(origin, size, view.status) {
+                    report_failure("draw collapsed progress", error.code().0);
+                    progress.hide();
+                }
+            } else {
+                progress.hide();
+            }
+        }
         view.panel = Some(panel);
     }
 
@@ -427,45 +597,103 @@ impl AppState {
         let Some(panel) = &mut view.panel else {
             return;
         };
-        let mut cursor = POINT::default();
         let foreground = unsafe { GetForegroundWindow() == self.hwnd };
         if !foreground {
+            let visible = panel.layer.visible
+                || panel
+                    .volume
+                    .as_ref()
+                    .is_some_and(|volume| volume.layer.visible);
             panel.clear_input();
-            panel.cursor = None;
-            panel.layer.hide();
+            if visible {
+                self.render_video_panel();
+            }
             return;
         }
-        let inside = unsafe {
-            GetCursorPos(&mut cursor).is_ok()
-                && GetAncestor(WindowFromPoint(cursor), GA_ROOTOWNER) == self.hwnd
-        };
-        let moved = panel.cursor != Some(cursor);
-        panel.cursor = Some(cursor);
-        let before = (panel.hover, panel.drag);
-        if let Some(layout) = &panel.layout {
-            unsafe {
-                let _ = ScreenToClient(self.hwnd, &mut cursor);
-            }
-            cursor.x -= layout.offset.x;
-            cursor.y -= layout.offset.y;
-            panel.over_panel = inside && panel.layer.visible && layout.contains(cursor);
-            panel.hover = if panel.over_panel {
-                layout.hit(cursor)
-            } else {
-                None
-            };
-            if let Some((slider, _)) = panel.drag {
-                panel.drag = Some((slider, layout.fraction(slider, cursor.x)));
-            }
+        let mut screen = POINT::default();
+        if unsafe { GetCursorPos(&mut screen) }.is_err() {
+            return;
         }
-        if moved && inside {
-            panel.focus = None;
-            panel.reveal();
+        let mut cursor = screen;
+        unsafe {
+            let _ = ScreenToClient(self.hwnd, &mut cursor);
         }
-        if (moved && inside && !panel.layer.visible)
-            || before != (panel.hover, panel.drag)
-            || (panel.layer.visible && !panel.wants_visible(pinned))
+        let now = Instant::now();
+        let side_layout = panel.volume.as_ref().and_then(|volume| volume.layout);
+        let bottom_local = panel.layout.as_ref().map(|layout| POINT {
+            x: cursor.x - layout.offset.x,
+            y: cursor.y - layout.offset.y,
+        });
+        let edge = panel
+            .edges
+            .map_or(EdgeZone::None, |edges| edges.zone(cursor));
+        let mut zone = edge;
+        if panel.layer.visible
+            && panel
+                .layout
+                .as_ref()
+                .zip(bottom_local)
+                .is_some_and(|(layout, local)| layout.contains(local))
         {
+            zone = EdgeZone::Bottom;
+        }
+        if panel
+            .volume
+            .as_ref()
+            .is_some_and(|volume| volume.layer.visible)
+            && side_layout.is_some_and(|layout| layout.contains(layout.local(cursor)))
+        {
+            zone = EdgeZone::Side;
+        }
+        let moved_screen = panel.cursor != Some(screen);
+        if zone != EdgeZone::None
+            && (moved_screen || edge != panel.zone)
+            && unsafe { GetAncestor(WindowFromPoint(screen), GA_ROOTOWNER) != self.hwnd }
+        {
+            zone = EdgeZone::None;
+        }
+        let moved = moved_screen || panel.zone != edge;
+        panel.cursor = Some(screen);
+        panel.zone = edge;
+        panel.reveal.pointer(zone == EdgeZone::Bottom, moved, now);
+        let before = (panel.hover, panel.drag, panel.focus);
+        if moved && zone == EdgeZone::Bottom {
+            panel.focus = None;
+        }
+        if let Some((layout, local)) = panel.layout.as_ref().zip(bottom_local) {
+            panel.hover = (zone == EdgeZone::Bottom && panel.layer.visible)
+                .then(|| layout.hit(local))
+                .flatten();
+            if panel.drag.is_some() {
+                panel.drag = Some(layout.fraction(local.x));
+            }
+        }
+        let mut redraw = (panel.wants_visible(pinned, now) && panel.layout.is_some())
+            != panel.layer.visible
+            || before != (panel.hover, panel.drag, panel.focus);
+        let mut set_volume = None;
+        if let Some(volume) = &mut panel.volume
+            && let Some(layout) = side_layout
+        {
+            volume.reveal.pointer(zone == EdgeZone::Side, moved, now);
+            let local = layout.local(cursor);
+            let hover = (zone == EdgeZone::Side && volume.layer.visible)
+                .then(|| layout.hit(local))
+                .flatten();
+            redraw |= hover != volume.hover || volume.wants_visible(now) != volume.layer.visible;
+            volume.hover = hover;
+            if volume.pressed == Some(VolumeHit::Track) {
+                let value = layout.value(local.y);
+                if view.preferences.volume != value || view.preferences.muted {
+                    set_volume = Some(value);
+                    redraw = true;
+                }
+            }
+        }
+        if let Some(value) = set_volume {
+            self.set_video_volume(value, false);
+        }
+        if redraw {
             self.render_video_panel();
         }
     }
@@ -486,7 +714,7 @@ impl AppState {
             .filter(|view| view.active)
             .and_then(|view| view.panel.as_mut())
         {
-            panel.reveal();
+            panel.reveal.show();
             self.render_video_panel();
         }
     }
@@ -495,7 +723,7 @@ impl AppState {
         if self.video().is_none() {
             return false;
         }
-        self.video_pause();
+        self.send_video_control(Control::TogglePause);
         true
     }
 
@@ -507,20 +735,18 @@ impl AppState {
         let Some(layout) = &panel.layout else { return };
         let hit = layout.hit(point);
         let mut click = None;
-        let mut slider = None;
+        let mut seek = None;
         match message {
             WM_LBUTTONDOWN => {
                 panel.focus = None;
                 panel.pressed = hit;
-                if let Some(Hit::Slider(kind)) = hit
-                    && (kind != Slider::Position || view.status.seekable)
-                {
-                    panel.drag = Some((kind, layout.fraction(kind, point.x)));
+                if hit == Some(Hit::Seek) && view.status.seekable {
+                    panel.drag = Some(layout.fraction(point.x));
                 }
             }
             WM_LBUTTONUP => {
-                if let Some((kind, _)) = panel.drag.take() {
-                    slider = Some((kind, layout.fraction(kind, point.x)));
+                if panel.drag.take().is_some() {
+                    seek = Some(layout.fraction(point.x));
                 } else if panel.pressed == hit
                     && let Some(Hit::Button(action)) = hit
                 {
@@ -534,15 +760,12 @@ impl AppState {
             }
             _ => {}
         }
-        panel.reveal();
+        if message != WM_CAPTURECHANGED {
+            panel.reveal.pointer(true, true, Instant::now());
+        }
         let duration_ms = view.status.duration_ms;
-        if let Some((kind, fraction)) = slider {
-            match kind {
-                Slider::Position => {
-                    self.send_video_control(Control::Seek((duration_ms as f32 * fraction) as i64))
-                }
-                Slider::Volume => self.set_video_volume((fraction * 100.0).round() as i32, false),
-            }
+        if let Some(fraction) = seek {
+            self.send_video_control(Control::Seek((duration_ms as f32 * fraction) as i64));
         }
         if let Some(action) = click {
             self.video_action(action);
@@ -567,7 +790,7 @@ impl AppState {
                 panel.focus = layout.focus(panel.focus, reverse, &model);
             }
             panel.hover = None;
-            panel.reveal();
+            panel.reveal.show();
             view.panel = Some(panel);
             self.render_video_panel();
         }
@@ -589,9 +812,11 @@ impl AppState {
             .as_deref_mut()
             .and_then(|view| view.panel.as_mut())
         {
+            let (cursor, zone) = (panel.cursor, panel.zone);
             panel.clear_input();
-            panel.reveal_until = Instant::now();
-            panel.layer.hide();
+            panel.cursor = cursor;
+            panel.zone = zone;
+            self.render_video_panel();
         }
     }
 
@@ -618,16 +843,97 @@ impl AppState {
             let volume = view.preferences.volume.saturating_add(delta);
             let muted = toggle_mute && !view.preferences.muted;
             self.set_video_volume(volume, muted);
+            self.reveal_video_volume();
         }
+    }
+
+    pub(super) fn video_wheel_at(&mut self, mut point: POINT, delta: i16) -> bool {
+        let Some(panel) = self.video().and_then(|view| view.panel.as_ref()) else {
+            return false;
+        };
+        let Some(volume) = &panel.volume else {
+            return false;
+        };
+        let Some(layout) = volume.layout else {
+            return false;
+        };
+        unsafe {
+            let _ = ScreenToClient(self.hwnd, &mut point);
+        }
+        let hot = panel
+            .edges
+            .is_some_and(|edges| edges.zone(point) == EdgeZone::Side);
+        if hot || (volume.layer.visible && layout.contains(layout.local(point))) {
+            if delta != 0 {
+                self.video_audio(if delta > 0 { 5 } else { -5 }, false);
+            }
+            return true;
+        }
+        false
+    }
+
+    fn reveal_video_volume(&mut self) {
+        if let Some(volume) = self
+            .video
+            .as_deref_mut()
+            .filter(|view| view.active)
+            .and_then(|view| view.panel.as_mut())
+            .and_then(|panel| panel.volume.as_mut())
+        {
+            volume.reveal.show();
+            self.render_video_panel();
+        }
+    }
+
+    pub(super) fn video_volume_input(&mut self, message: u32, point: POINT) {
+        let Some(view) = self.video.as_deref_mut().filter(|view| view.active) else {
+            return;
+        };
+        let Some(volume) = view.panel.as_mut().and_then(|panel| panel.volume.as_mut()) else {
+            return;
+        };
+        let Some(layout) = volume.layout else {
+            return;
+        };
+        let hit = layout.hit(point);
+        let mut value = None;
+        let mut toggle = false;
+        match message {
+            WM_LBUTTONDOWN => {
+                volume.pressed = hit;
+                if hit == Some(VolumeHit::Track) {
+                    value = Some(layout.value(point.y));
+                }
+            }
+            WM_LBUTTONUP => match volume.pressed.take() {
+                Some(VolumeHit::Track) => value = Some(layout.value(point.y)),
+                Some(VolumeHit::Mute) if hit == Some(VolumeHit::Mute) => toggle = true,
+                _ => {}
+            },
+            WM_CAPTURECHANGED => volume.pressed = None,
+            _ => {}
+        }
+        if message != WM_CAPTURECHANGED {
+            volume.reveal.pointer(true, true, Instant::now());
+        }
+        if let Some(value) = value {
+            self.set_video_volume(value, false);
+        } else if toggle {
+            let preferences = view.preferences;
+            self.set_video_volume(preferences.volume, !preferences.muted);
+        }
+        self.render_video_panel();
     }
 
     fn set_video_volume(&mut self, volume: i32, muted: bool) {
         if let Some(view) = self.video.as_deref_mut().filter(|view| view.active) {
-            let volume = volume.clamp(0, 100);
+            let volume = volume.clamp(0, MAX_VOLUME);
+            if view.preferences.volume == volume && view.preferences.muted == muted {
+                return;
+            }
             view.preferences.volume = volume;
             view.preferences.muted = muted;
             self.send_video_control(Control::Audio { volume, muted });
-            self.reveal_video_panel();
         }
     }
 
@@ -659,7 +965,7 @@ impl AppState {
             Action::Previous => self.navigate(-1),
             Action::Play => self.video_pause(),
             Action::Next => self.navigate(1),
-            Action::Mute => self.video_audio(0, true),
+            Action::Volume => self.reveal_video_volume(),
             Action::Loop => self.video_loop(),
             Action::Rate | Action::More => self.video_menu(action),
             Action::Fullscreen => self.toggle_fullscreen(),
@@ -835,5 +1141,29 @@ impl Drop for PopupMenu {
         unsafe {
             let _ = DestroyMenu(self.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pointer_reveal_requires_a_zone_and_expires_while_stationary() {
+        let now = Instant::now();
+        let mut reveal = Reveal::default();
+        reveal.pointer(false, true, now);
+        assert!(!reveal.visible(now));
+
+        reveal.pointer(true, true, now);
+        assert!(reveal.visible(now));
+        let idle = now + HIDE_AFTER;
+        reveal.pointer(true, false, idle);
+        assert!(!reveal.visible(idle));
+
+        reveal.pointer(true, true, idle);
+        assert!(reveal.visible(idle));
+        reveal.pointer(false, true, idle);
+        assert!(!reveal.visible(idle));
     }
 }

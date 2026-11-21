@@ -27,6 +27,7 @@ use crate::mailbox::Mailbox;
 
 pub const WM_PLAYBACK: u32 = WM_APP + 11;
 pub const WM_PLAYBACK_CLOSED: u32 = WM_APP + 12;
+pub const MAX_VOLUME: i32 = 150;
 const REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -436,7 +437,10 @@ impl Player {
             None => Self::create(surface)?,
         };
         let path = CString::new(path).map_err(|_| Phase::Failed)?;
-        current.preferences = preferences;
+        current.preferences = Preferences {
+            volume: preferences.volume.clamp(0, MAX_VOLUME),
+            ..preferences
+        };
         let api = &current.api;
         unsafe {
             let media = (api.libvlc_media_new_path)(current.instance, path.as_ptr());
@@ -568,7 +572,7 @@ impl Player {
                     }
                 }
                 Control::Audio { volume, muted } => {
-                    self.preferences.volume = volume;
+                    self.preferences.volume = volume.clamp(0, MAX_VOLUME);
                     self.preferences.muted = muted;
                     return !self.apply_audio();
                 }

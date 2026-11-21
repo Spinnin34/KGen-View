@@ -21,7 +21,7 @@ use windows::{
         },
         System::LibraryLoader::GetModuleHandleW,
         UI::{
-            Input::KeyboardAndMouse::{ReleaseCapture, SetCapture},
+            Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture},
             Shell::{DragAcceptFiles, DragFinish, HDROP},
             WindowsAndMessaging::*,
         },
@@ -30,17 +30,24 @@ use windows::{
 };
 
 pub const WM_PANEL_INPUT: u32 = WM_APP + 13;
+pub const WM_VOLUME_INPUT: u32 = WM_APP + 14;
 const CLASS: windows::core::PCWSTR = w!("KGenView.VideoControls");
 
+pub enum LayerKind {
+    Controls,
+    Volume,
+    Progress,
+}
+
 pub struct Layer {
-    pub hwnd: HWND,
+    hwnd: HWND,
     target: ID2D1DCRenderTarget,
     bitmap: Option<LayerBitmap>,
     pub visible: bool,
 }
 
 impl Layer {
-    pub fn new(owner: HWND, factory: &ID2D1Factory) -> Result<Self> {
+    pub fn new(owner: HWND, factory: &ID2D1Factory, kind: LayerKind) -> Result<Self> {
         unsafe {
             let instance = HINSTANCE(GetModuleHandleW(None)?.0);
             let class = WNDCLASSEXW {
@@ -68,10 +75,23 @@ impl Layer {
                 ..Default::default()
             })?;
             target.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+            let (title, route, extra_style) = match kind {
+                LayerKind::Controls => (
+                    w!("KGen View Video Controls"),
+                    WM_PANEL_INPUT,
+                    WINDOW_EX_STYLE::default(),
+                ),
+                LayerKind::Volume => (
+                    w!("KGen View Video Volume"),
+                    WM_VOLUME_INPUT,
+                    WINDOW_EX_STYLE::default(),
+                ),
+                LayerKind::Progress => (w!("KGen View Video Progress"), 0, WS_EX_TRANSPARENT),
+            };
             let hwnd = CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | extra_style,
                 CLASS,
-                w!("KGen View Video Controls"),
+                title,
                 WS_POPUP,
                 0,
                 0,
@@ -82,7 +102,10 @@ impl Layer {
                 Some(instance),
                 None,
             )?;
-            DragAcceptFiles(hwnd, true);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, route as isize);
+            if route != 0 {
+                DragAcceptFiles(hwnd, true);
+            }
             Ok(Self {
                 hwnd,
                 target,
@@ -151,6 +174,9 @@ impl Layer {
     pub fn hide(&mut self) {
         if self.visible {
             unsafe {
+                if GetCapture() == self.hwnd {
+                    let _ = ReleaseCapture();
+                }
                 let _ = ShowWindow(self.hwnd, SW_HIDE);
             }
             self.visible = false;
@@ -239,11 +265,15 @@ unsafe extern "system" fn window_proc(
         match msg {
             WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
             WM_LBUTTONDOWN | WM_LBUTTONUP | WM_CAPTURECHANGED => {
+                let route = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as u32;
+                if route == 0 {
+                    return DefWindowProcW(hwnd, msg, wparam, lparam);
+                }
                 if msg == WM_LBUTTONDOWN {
                     SetCapture(hwnd);
                 }
                 if let Ok(owner) = GetWindow(hwnd, GW_OWNER) {
-                    let _ = PostMessageW(Some(owner), WM_PANEL_INPUT, WPARAM(msg as usize), lparam);
+                    let _ = PostMessageW(Some(owner), route, WPARAM(msg as usize), lparam);
                 }
                 if msg == WM_LBUTTONUP {
                     let _ = ReleaseCapture();

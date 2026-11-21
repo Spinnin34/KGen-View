@@ -75,7 +75,7 @@ WebP y HEIF/HEIC dependen de los codecs instalados en Windows. JPEG XL se decodi
 
 El instalador y el ZIP portátil incluyen LibVLC 3 para reproducir archivos locales como MP4, MKV, WebM, MOV, AVI, WMV, MPEG, M2TS, FLV, OGV y 3GP. La compatibilidad depende del códec de las pistas y del contenedor. LibVLC usa decodificación por hardware cuando el códec, la GPU y el controlador son compatibles, y puede decodificar por software en los demás casos. La carpeta `vlc` incluye los avisos de licencia y enlaces al código fuente de VideoLAN.
 
-Al mover el ratón sobre la ventana aparecen los controles flotantes. El panel se oculta después de unos segundos de inactividad y permanece visible mientras se usa. Arrastra la barra de progreso para elegir el punto de reproducción. El menú **Más opciones** incluye avances de diez segundos y velocidades de 0,5× a 2×. El ajuste automático adapta la ventana al tamaño y orientación del vídeo dentro del monitor. Las flechas, la rueda, Inicio y Fin recorren el tipo de archivo abierto.
+Acerca el ratón al borde inferior para ver los controles flotantes. Al alejarlo o dejarlo quieto queda una línea naranja con la posición del vídeo. Arrastra la barra de progreso abierta para buscar un punto. El lateral derecho muestra el volumen vertical de 0 a 150 %, con una marca en el 100 %. Usa la rueda en ese lateral para ajustar el volumen. El menú **Más opciones** incluye avances de diez segundos y velocidades de 0,5× a 2×. El ajuste automático adapta la ventana al tamaño y orientación del vídeo dentro del monitor. Las flechas, la rueda sobre el vídeo, Inicio y Fin recorren el tipo de archivo abierto.
 
 ### Exportación
 

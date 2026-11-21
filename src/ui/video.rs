@@ -3,8 +3,8 @@ use windows::{
         Foundation::{POINT, RECT, SIZE},
         Graphics::{
             Direct2D::{
-                Common::D2D1_COLOR_F, D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_ELLIPSE,
-                ID2D1DCRenderTarget, ID2D1SolidColorBrush,
+                Common::D2D1_COLOR_F, D2D1_DRAW_TEXT_OPTIONS_CLIP, ID2D1DCRenderTarget,
+                ID2D1SolidColorBrush,
             },
             DirectWrite::{
                 DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -26,15 +26,23 @@ use crate::{
 
 use super::{layout::PxRect, theme::rgb};
 
+mod edge;
 mod layer;
-pub use layer::{Layer, WM_PANEL_INPUT};
+pub use edge::{EdgeLayout, EdgeZone, ProgressLine, VolumeHit, VolumeLayout, VolumePainter};
+pub use layer::{Layer, LayerKind, WM_PANEL_INPUT, WM_VOLUME_INPUT};
+
+const ACCENT: D2D1_COLOR_F = rgb(0xff8d42);
+const HOT_ACCENT: D2D1_COLOR_F = rgb(0xffb277);
+const INK: D2D1_COLOR_F = rgb(0xfff4eb);
+const MUTED: D2D1_COLOR_F = rgb(0xc9afa0);
+const TRACK: D2D1_COLOR_F = rgb(0x503b30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Previous,
     Play,
     Next,
-    Mute,
+    Volume,
     Loop,
     Rate,
     Fullscreen,
@@ -44,15 +52,9 @@ pub enum Action {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Slider {
-    Position,
-    Volume,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Button(Action),
-    Slider(Slider),
+    Seek,
 }
 
 #[derive(Clone, PartialEq)]
@@ -62,7 +64,6 @@ pub struct PanelLayout {
     scale: f32,
     buttons: Vec<(Action, PxRect)>,
     seek: PxRect,
-    volume: Option<PxRect>,
     time: PxRect,
     hint: PxRect,
 }
@@ -81,7 +82,7 @@ impl PanelLayout {
             6.0 * scale
         };
         let size = SIZE {
-            cx: (width as f32 - 2.0 * inset).min(748.0 * scale).round() as i32,
+            cx: (width as f32 - 2.0 * inset).min(916.0 * scale).round() as i32,
             cy: (94.0 * scale).round() as i32,
         };
         let width = size.cx as f32;
@@ -91,18 +92,19 @@ impl PanelLayout {
         };
         let pad = if width >= 270.0 * scale { 14.0 } else { 8.0 } * scale;
         let right = width - pad;
-        let seek = PxRect::new(pad, 26.0 * scale, right, 51.0 * scale);
-        let time = PxRect::new(pad, 6.0 * scale, right, 28.0 * scale);
+        let seek = PxRect::new(pad, 47.0 * scale, right, 73.0 * scale);
+        let time = PxRect::new(pad, 71.0 * scale, right, 91.0 * scale);
+        let hint_margin = (62.0 * scale).min((right - pad) * 0.25);
         let hint = PxRect::new(
-            (pad + 140.0 * scale).min(right),
+            pad + hint_margin,
             time.top,
-            right,
+            right - hint_margin,
             time.bottom,
         );
         let primary = [Action::Previous, Action::Play, Action::Next];
         let mut secondary = vec![Action::Fullscreen, Action::More];
         if width >= 246.0 * scale {
-            secondary.splice(0..0, [Action::Mute, Action::Loop]);
+            secondary.splice(0..0, [Action::Volume, Action::Loop]);
         }
         if width >= 366.0 * scale {
             secondary.insert(2, Action::Rate);
@@ -118,19 +120,16 @@ impl PanelLayout {
         } else {
             0.0
         };
-        let button_width = (32.0 * scale)
+        let button_width = (38.0 * scale)
             .min((right - pad - rate_extra) / (primary.len() + secondary.len()) as f32);
-        let row = |x, width| PxRect::new(x, 52.0 * scale, x + width, 85.0 * scale);
+        let row = |x, width| PxRect::new(x, 7.0 * scale, x + width, 45.0 * scale);
         let mut x = pad;
         let mut buttons = Vec::new();
         for action in primary {
             buttons.push((action, row(x, button_width)));
             x += button_width;
         }
-        let show_volume = width >= 520.0 * scale;
-        let volume_width = if show_volume { 62.0 * scale } else { 0.0 };
-        x = right - button_width * secondary.len() as f32 - volume_width - rate_extra;
-        let mut volume = None;
+        x = right - button_width * secondary.len() as f32 - rate_extra;
         for action in secondary {
             let width = button_width
                 + if action == Action::Rate {
@@ -140,10 +139,6 @@ impl PanelLayout {
                 };
             buttons.push((action, row(x, width)));
             x += width;
-            if action == Action::Mute && show_volume {
-                volume = Some(row(x + 4.0 * scale, volume_width - 8.0 * scale));
-                x += volume_width;
-            }
         }
         Some(Self {
             offset,
@@ -151,34 +146,27 @@ impl PanelLayout {
             scale,
             buttons,
             seek,
-            volume,
             time,
             hint,
         })
     }
 
-    pub fn contains(&self, point: POINT) -> bool {
-        (0..self.size.cx).contains(&point.x) && (0..self.size.cy).contains(&point.y)
-    }
-
     pub fn hit(&self, point: POINT) -> Option<Hit> {
         if self.seek.contains(point) {
-            return Some(Hit::Slider(Slider::Position));
-        }
-        if self.volume.is_some_and(|area| area.contains(point)) {
-            return Some(Hit::Slider(Slider::Volume));
+            return Some(Hit::Seek);
         }
         self.buttons
             .iter()
             .find_map(|(button, area)| area.contains(point).then_some(Hit::Button(*button)))
     }
 
-    pub fn fraction(&self, slider: Slider, x: i32) -> f32 {
-        let rect = match slider {
-            Slider::Position => self.seek,
-            Slider::Volume => self.volume.unwrap_or_default(),
-        };
+    pub fn fraction(&self, x: i32) -> f32 {
+        let rect = self.seek;
         ((x as f32 - rect.left) / (rect.right - rect.left).max(1.0)).clamp(0.0, 1.0)
+    }
+
+    pub fn contains(&self, point: POINT) -> bool {
+        (0..self.size.cx).contains(&point.x) && (0..self.size.cy).contains(&point.y)
     }
 
     pub fn anchor(&self, action: Action) -> Option<POINT> {
@@ -222,11 +210,12 @@ pub struct Model<'a> {
     pub preferences: Preferences,
     pub language: Language,
     pub fullscreen: bool,
+    pub volume_open: bool,
     pub can_navigate: bool,
     pub update_busy: bool,
     pub hover: Option<Hit>,
     pub focus: Option<Action>,
-    pub drag: Option<(Slider, f32)>,
+    pub drag: Option<f32>,
     pub notice: Option<&'a str>,
 }
 
@@ -250,8 +239,7 @@ impl Model<'_> {
                 Phase::Failed | Phase::MissingEngine => ("Volver a intentar", "Retry"),
                 _ => ("Reproducir", "Play"),
             },
-            Action::Mute if self.preferences.muted => ("Activar sonido", "Unmute"),
-            Action::Mute => ("Silenciar", "Mute"),
+            Action::Volume => ("Volumen", "Volume"),
             Action::Loop if self.preferences.looping => ("Desactivar bucle", "Turn off loop"),
             Action::Loop => ("Repetir en bucle", "Loop video"),
             Action::Rate => ("Velocidad", "Playback speed"),
@@ -279,8 +267,7 @@ impl Model<'_> {
             Action::Play if self.status.phase == Phase::Playing => 0xe769,
             Action::Play => 0xe768,
             Action::Next => 0xe893,
-            Action::Mute if self.preferences.muted || self.preferences.volume == 0 => 0xe74f,
-            Action::Mute => 0xe767,
+            Action::Volume => speaker_glyph(self.preferences),
             Action::Loop => 0xe8ee,
             Action::Fullscreen if self.fullscreen => 0xe73f,
             Action::Fullscreen => 0xe740,
@@ -326,35 +313,54 @@ pub struct Painter {
     scale: f32,
     icons: IDWriteTextFormat,
     time: IDWriteTextFormat,
+    remaining: IDWriteTextFormat,
     hint: IDWriteTextFormat,
     rate: IDWriteTextFormat,
     brush: ID2D1SolidColorBrush,
+}
+
+fn speaker_glyph(preferences: Preferences) -> u16 {
+    if preferences.muted || preferences.volume == 0 {
+        0xe74f
+    } else {
+        0xe767
+    }
+}
+
+fn text_format(
+    factory: &IDWriteFactory,
+    name: PCWSTR,
+    size: f32,
+    align: DWRITE_TEXT_ALIGNMENT,
+) -> Result<IDWriteTextFormat> {
+    unsafe {
+        let format = factory.CreateTextFormat(
+            name,
+            None,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            size,
+            w!(""),
+        )?;
+        format.SetTextAlignment(align)?;
+        format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+        format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+        Ok(format)
+    }
 }
 
 impl Painter {
     fn new(target: &ID2D1DCRenderTarget, scale: f32) -> Result<Self> {
         unsafe {
             let factory: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let format = |name: PCWSTR, size: f32, align: DWRITE_TEXT_ALIGNMENT| -> Result<_> {
-                let fmt = factory.CreateTextFormat(
-                    name,
-                    None,
-                    DWRITE_FONT_WEIGHT_NORMAL,
-                    DWRITE_FONT_STYLE_NORMAL,
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    size * scale,
-                    w!(""),
-                )?;
-                fmt.SetTextAlignment(align)?;
-                fmt.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
-                fmt.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
-                Ok(fmt)
-            };
+            let format = |name, size, align| text_format(&factory, name, size * scale, align);
             Ok(Self {
                 scale,
-                icons: format(w!("Segoe MDL2 Assets"), 15.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
+                icons: format(w!("Segoe MDL2 Assets"), 16.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 time: format(w!("Consolas"), 12.0, DWRITE_TEXT_ALIGNMENT_LEADING)?,
-                hint: format(w!("Segoe UI"), 12.0, DWRITE_TEXT_ALIGNMENT_TRAILING)?,
+                remaining: format(w!("Consolas"), 12.0, DWRITE_TEXT_ALIGNMENT_TRAILING)?,
+                hint: format(w!("Segoe UI"), 12.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 rate: format(w!("Segoe UI"), 12.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 brush: target.CreateSolidColorBrush(&rgb(0xf1f1f6), None)?,
             })
@@ -379,11 +385,7 @@ impl Painter {
     }
 
     unsafe fn scene(&self, target: &ID2D1DCRenderTarget, layout: &PanelLayout, model: &Model<'_>) {
-        const ACCENT: D2D1_COLOR_F = rgb(0xffa069);
-        const INK: D2D1_COLOR_F = rgb(0xf1f1f6);
-        const MUTED: D2D1_COLOR_F = rgb(0xaeb4c4);
-        const TRACK: D2D1_COLOR_F = rgb(0x454a58);
-        const DISABLED: D2D1_COLOR_F = rgb(0x687080);
+        const DISABLED: D2D1_COLOR_F = rgb(0x8a7367);
         let scale = layout.scale;
         let panel = PxRect::new(
             0.5,
@@ -391,12 +393,12 @@ impl Painter {
             layout.size.cx as f32 - 0.5,
             layout.size.cy as f32 - 0.5,
         );
-        let radius = 16.0 * scale;
+        let radius = 13.0 * scale;
         let brush = &self.brush;
         unsafe {
             brush.SetColor(&D2D1_COLOR_F {
-                a: 0.96,
-                ..rgb(0x171b25)
+                a: 0.94,
+                ..rgb(0x1b1410)
             });
             target.FillRoundedRectangle(&panel.as_rounded(radius), brush);
             brush.SetColor(&D2D1_COLOR_F { a: 0.85, ..TRACK });
@@ -421,35 +423,34 @@ impl Painter {
                 color,
             )
         };
-        let progress = if model.status.duration_ms > 0 {
-            model.status.elapsed_ms as f32 / model.status.duration_ms as f32
-        } else {
-            0.0
-        };
-        let (preview, volume) = match model.drag {
-            Some((Slider::Position, fraction)) => {
-                (fraction, model.preferences.volume as f32 / 100.0)
-            }
-            Some((Slider::Volume, fraction)) => (progress, fraction),
-            _ => (progress, model.preferences.volume as f32 / 100.0),
-        };
+        let preview = model
+            .drag
+            .unwrap_or_else(|| progress(model.status).unwrap_or(0.0));
         if let Some(message) = model.message() {
             label(message, layout.time, &self.time, &INK);
         } else {
-            let elapsed = if matches!(model.drag, Some((Slider::Position, _))) {
+            let elapsed = if model.drag.is_some() {
                 (model.status.duration_ms as f32 * preview) as i64
             } else {
                 model.status.elapsed_ms
             };
-            let time = format!(
-                "{} / {}",
-                time_label(elapsed),
-                time_label(model.status.duration_ms)
-            );
-            label(&time, layout.time, &self.time, &INK);
+            let elapsed = if model.status.duration_ms > 0 {
+                elapsed.clamp(0, model.status.duration_ms)
+            } else {
+                elapsed.max(0)
+            };
+            label(&time_label(elapsed), layout.time, &self.time, &INK);
+            if model.status.duration_ms > 0 {
+                let remaining = time_label(model.status.duration_ms.saturating_sub(elapsed).max(0));
+                label(
+                    &format!("−{remaining}"),
+                    layout.time,
+                    &self.remaining,
+                    &MUTED,
+                );
+            }
             let selected = match model.hover {
                 Some(Hit::Button(button)) => Some(model.label(button)),
-                Some(Hit::Slider(Slider::Volume)) => Some(model.translate(("Volumen", "Volume"))),
                 _ => model.focus.map(|button| model.label(button)),
             };
             if let Some(text) = selected {
@@ -477,30 +478,17 @@ impl Painter {
             }
             if thumb {
                 brush.SetColor(&ACCENT);
-                let radius = 4.0 * scale;
-                let mut ellipse = D2D1_ELLIPSE {
-                    radiusX: radius,
-                    radiusY: radius,
-                    ..Default::default()
-                };
-                ellipse.point.X = x;
-                ellipse.point.Y = y;
-                target.FillEllipse(&ellipse, brush);
+                let thumb = PxRect::new(
+                    x - 2.0 * scale,
+                    y - 7.0 * scale,
+                    x + 2.0 * scale,
+                    y + 7.0 * scale,
+                );
+                brush.SetColor(&HOT_ACCENT);
+                target.FillRoundedRectangle(&thumb.as_rounded(2.0 * scale), brush);
             }
         };
         track(layout.seek, preview, model.status.seekable);
-        if let Some(rect) = layout.volume {
-            let fraction = if model.preferences.muted && model.drag.is_none() {
-                0.0
-            } else {
-                volume
-            };
-            track(
-                rect,
-                fraction,
-                matches!(model.hover, Some(Hit::Slider(Slider::Volume))),
-            );
-        }
         for (button, rect) in &layout.buttons {
             let rect = rect.inset(2.0 * scale);
             let enabled = model.enabled(*button);
@@ -512,6 +500,7 @@ impl Painter {
             } else if accent {
                 rgb(0x241b18)
             } else if (*button == Action::Loop && model.preferences.looping)
+                || (*button == Action::Volume && model.volume_open)
                 || *button == Action::Update
             {
                 ACCENT
@@ -521,9 +510,9 @@ impl Painter {
             unsafe {
                 if accent || highlighted {
                     brush.SetColor(&if accent {
-                        if highlighted { rgb(0xffba93) } else { ACCENT }
+                        if highlighted { HOT_ACCENT } else { ACCENT }
                     } else {
-                        rgb(0x343948)
+                        rgb(0x4b2d1e)
                     });
                     target.FillRoundedRectangle(&rect.as_rounded(8.0 * scale), brush);
                 }
@@ -544,6 +533,11 @@ impl Painter {
             }
         }
     }
+}
+
+fn progress(status: PlaybackStatus) -> Option<f32> {
+    (status.duration_ms > 0)
+        .then(|| (status.elapsed_ms as f32 / status.duration_ms as f32).clamp(0.0, 1.0))
 }
 
 fn time_label(ms: i64) -> String {
