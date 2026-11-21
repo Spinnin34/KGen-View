@@ -226,12 +226,9 @@ impl ChromeLayout {
         }
     }
 
-    pub fn toolbar_height(&self) -> i32 {
-        (self.menu.bottom + self.toolbar.bottom - self.toolbar.top).round() as i32
-    }
-
-    pub fn status_height(&self) -> i32 {
-        (self.status.bottom - self.status.top).round() as i32
+    pub fn chrome_height(dpi: u32) -> i32 {
+        let scale = dpi as f32 / 96.0;
+        (px(MENU_DIP, scale) + px(TOOLBAR_DIP, scale) + px(STATUS_DIP, scale)) as i32
     }
 }
 

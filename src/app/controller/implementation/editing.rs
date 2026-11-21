@@ -121,11 +121,11 @@ impl AppState {
     }
 
     pub(super) fn toggle_fullscreen(&mut self) {
+        self.present_startup_window();
         self.bitmaps.clear();
         self.target = None;
         self.chrome.reset_render_resources();
         unsafe {
-            let _ = KillTimer(Some(self.hwnd), TIMER_AUTO_RESIZE);
             if !self.fullscreen {
                 let _ = GetWindowRect(self.hwnd, &mut self.saved_rect);
                 self.saved_style = WINDOW_STYLE(GetWindowLongPtrW(self.hwnd, GWL_STYLE) as u32);

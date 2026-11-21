@@ -1,4 +1,5 @@
 use super::*;
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWDEFAULT;
 mod wndproc;
 use wndproc::window_proc;
 
@@ -36,6 +37,8 @@ pub fn run() -> Result<(), WinError> {
             .first()
             .and_then(|path| resolve_explorer_archive_selection(path, launch_window))
     });
+    let fit_on_startup =
+        settings.auto_resize && (initial_archive_selection.is_some() || !paths.is_empty());
     let always_on_top = settings.always_on_top;
     let raw_state = Box::into_raw(Box::new(AppState::new(settings)?));
     let hwnd = unsafe {
@@ -75,8 +78,17 @@ pub fn run() -> Result<(), WinError> {
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             );
         }
-        let _ = ShowWindow(hwnd, SW_SHOW);
-        let _ = UpdateWindow(hwnd);
+        let state = state_mut(hwnd);
+        state.startup_window_pending = fit_on_startup
+            && SetTimer(
+                Some(hwnd),
+                TIMER_STARTUP_WINDOW,
+                STARTUP_WINDOW_DELAY_MS,
+                None,
+            ) != 0;
+        if !state.startup_window_pending {
+            show_main_window(hwnd);
+        }
     }
     updater::register_restart(
         paths.first().map(PathBuf::as_path),
@@ -87,23 +99,6 @@ pub fn run() -> Result<(), WinError> {
             )
         }),
     );
-    unsafe {
-        state_mut(hwnd).begin_update_check();
-    }
-    if capture_enabled {
-        unsafe {
-            state_mut(hwnd).settings.save();
-        }
-        crate::platform::screenshot::stop_background();
-        if let Err(error) = crate::platform::screenshot::start_background() {
-            unsafe {
-                state_mut(hwnd).settings.capture_enabled = false;
-                state_mut(hwnd).settings.save();
-                state_mut(hwnd).rebuild_menu();
-            }
-            fatal_error(&error);
-        }
-    }
     if std::env::args().any(|arg| arg == "--mcp") {
         unsafe {
             state_mut(hwnd).mcp_requests = Some(crate::mcp::start(hwnd.0 as isize));
@@ -117,6 +112,30 @@ pub fn run() -> Result<(), WinError> {
     } else if let Some(path) = paths.first() {
         unsafe {
             state_mut(hwnd).start_load(path.clone());
+        }
+    }
+    unsafe {
+        let state = state_mut(hwnd);
+        if state.startup_window_pending && state.load_started.is_some() {
+            // Initialize Direct2D while the worker decodes the opening image.
+            let _ = state.ensure_target();
+        }
+        state.begin_update_check();
+    }
+    if capture_enabled {
+        unsafe {
+            state_mut(hwnd).settings.save();
+        }
+        crate::platform::screenshot::stop_background();
+        if let Err(error) = crate::platform::screenshot::start_background() {
+            unsafe {
+                let state = state_mut(hwnd);
+                state.settings.capture_enabled = false;
+                state.settings.save();
+                state.rebuild_menu();
+                state.present_startup_window();
+            }
+            fatal_error(&error);
         }
     }
     if paths.len() > 1
@@ -135,6 +154,24 @@ pub fn run() -> Result<(), WinError> {
     }
     unsafe { drop(Box::from_raw(raw_state)) };
     Ok(())
+}
+
+fn show_main_window(hwnd: HWND) {
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOWDEFAULT);
+        let _ = UpdateWindow(hwnd);
+    }
+}
+
+impl AppState {
+    pub(super) fn present_startup_window(&mut self) {
+        if std::mem::take(&mut self.startup_window_pending) {
+            unsafe {
+                let _ = KillTimer(Some(self.hwnd), TIMER_STARTUP_WINDOW);
+            }
+            show_main_window(self.hwnd);
+        }
+    }
 }
 
 struct ComApartment;

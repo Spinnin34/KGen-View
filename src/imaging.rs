@@ -74,8 +74,8 @@ mod wic_view;
 use crate::resources::PixelBuffer;
 use gif_source::decode_gif;
 pub use request::DecodeRequest;
-pub use view::EditOperation;
 use view::{EditHistory, ViewTransform};
+pub use view::{EditOperation, fitted_size};
 use wic_view::prepare_wic_view;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

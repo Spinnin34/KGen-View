@@ -353,6 +353,7 @@ impl AppState {
             } else {
                 "Could not create the player."
             }));
+            self.present_startup_window();
             return;
         };
         view.active = true;
@@ -373,6 +374,8 @@ impl AppState {
         let view = self.video.as_deref().unwrap();
         if let Some(playback) = &view.playback {
             playback.open(self.generation, display_path(&path), view.preferences);
+        } else {
+            self.present_startup_window();
         }
         unsafe {
             let _ = InvalidateRect(Some(self.hwnd), None, false);
@@ -441,6 +444,13 @@ impl AppState {
     }
 
     pub(super) fn layout_video(&mut self) {
+        if self.settings.auto_resize
+            && !self.keeps_window_size()
+            && !unsafe { IsIconic(self.hwnd).as_bool() }
+            && let Some(dimensions) = self.take_video_resize()
+        {
+            self.fit_open_media(dimensions, true);
+        }
         let Some(view) = self.video() else { return };
         let mut client = RECT::default();
         unsafe {
@@ -460,7 +470,6 @@ impl AppState {
             }
         }
         self.layout_video_panel();
-        self.schedule_video_resize();
     }
 
     pub(super) fn layout_video_panel(&mut self) {
@@ -516,7 +525,7 @@ impl AppState {
         view.playhead
             .sample(view.status, status, view.preferences.rate, now);
         view.status = status;
-        if was_failed != view.failed() {
+        if new_size || was_failed != view.failed() {
             self.layout_video();
         } else if state_changed
             || view
@@ -526,22 +535,17 @@ impl AppState {
         {
             self.render_video_panel();
         }
-        if new_size {
-            self.schedule_video_resize();
-        }
-    }
-
-    fn schedule_video_resize(&self) {
-        if self.settings.auto_resize
-            && self
-                .video()
-                .is_some_and(|view| view.resize_pending && view.status.dimensions.is_some())
+        if new_size
+            || matches!(
+                status.phase,
+                Phase::Ended | Phase::MissingEngine | Phase::Failed
+            )
         {
-            self.schedule_auto_resize();
+            self.present_startup_window();
         }
     }
 
-    pub(super) fn take_video_resize(&mut self) -> Option<(u32, u32)> {
+    fn take_video_resize(&mut self) -> Option<(u32, u32)> {
         let view = self
             .video
             .as_deref_mut()

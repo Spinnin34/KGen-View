@@ -32,7 +32,8 @@ pub use edge::{EdgeLayout, EdgeZone, ProgressLine, VolumeHit, VolumeLayout, Volu
 pub use layer::{Layer, LayerKind, WM_PANEL_INPUT, WM_VOLUME_INPUT};
 
 const ACCENT: D2D1_COLOR_F = rgb(0xff8d42);
-const HOT_ACCENT: D2D1_COLOR_F = rgb(0xffb277);
+const HOT_ACCENT: D2D1_COLOR_F = rgb(0xffbb89);
+const ACCENT_HALO: D2D1_COLOR_F = D2D1_COLOR_F { a: 0.19, ..ACCENT };
 const INK: D2D1_COLOR_F = rgb(0xf4f4f4);
 const MUTED: D2D1_COLOR_F = rgb(0xb4b4b8);
 const TRACK: D2D1_COLOR_F = rgb(0x4e4e54);
@@ -486,43 +487,52 @@ impl Painter {
             unsafe {
                 brush.SetColor(&TRACK);
                 target.FillRoundedRectangle(&rail.as_rounded(half), brush);
-                brush.SetColor(&ACCENT);
+                let cursor = model
+                    .seek_hover
+                    .filter(|_| model.drag.is_none())
+                    .map(|fraction| rail.left + (rail.right - rail.left) * fraction);
                 if x > rail.left {
                     let played = PxRect { right: x, ..rail };
+                    brush.SetColor(&ACCENT);
                     target.FillRoundedRectangle(
                         &played.as_rounded(half.min((x - rail.left) * 0.5)),
                         brush,
                     );
                 }
-                if model.status.seekable {
-                    let radius = if model.drag.is_some() {
-                        4.75
-                    } else if active {
-                        4.0
+                if let Some(cursor) = cursor
+                    && (cursor - x).abs() > 7.0 * scale
+                {
+                    let span = PxRect {
+                        left: cursor.min(x),
+                        right: cursor.max(x),
+                        ..rail
+                    };
+                    brush.SetColor(&if cursor > x {
+                        rgb(0x855b44)
                     } else {
-                        2.65
-                    } * scale;
-                    brush.SetColor(&if model.drag.is_some() {
-                        HOT_ACCENT
-                    } else {
-                        ACCENT
+                        rgb(0xca6e3c)
                     });
-                    target.FillEllipse(&dot(x, y, radius), brush);
-                    if model.drag.is_none()
-                        && let Some(fraction) = model.seek_hover
-                    {
-                        let cursor = rail.left + (rail.right - rail.left) * fraction;
-                        if (cursor - x).abs() > 7.0 * scale {
-                            brush.SetColor(&MUTED);
-                            let marker = PxRect::new(
-                                cursor - 0.55 * scale,
-                                y - 3.8 * scale,
-                                cursor + 0.55 * scale,
-                                y + 3.8 * scale,
-                            );
-                            target.FillRectangle(&marker.as_d2d(), brush);
-                        }
-                    }
+                    target.FillRoundedRectangle(&span.as_rounded(half), brush);
+                    let marker = PxRect::new(
+                        cursor - 0.65 * scale,
+                        y - 4.0 * scale,
+                        cursor + 0.65 * scale,
+                        y + 4.0 * scale,
+                    );
+                    brush.SetColor(&HOT_ACCENT);
+                    target.FillRoundedRectangle(&marker.as_rounded(0.65 * scale), brush);
+                }
+                if model.status.seekable {
+                    draw_thumb(
+                        target,
+                        brush,
+                        x,
+                        y,
+                        scale,
+                        active,
+                        model.drag.is_some(),
+                        false,
+                    );
                 }
             }
         }
@@ -545,23 +555,23 @@ impl Painter {
                 INK
             };
             unsafe {
-                if *button == Action::Play && enabled {
-                    brush.SetColor(&if highlighted {
-                        rgb(0x47332a)
-                    } else {
-                        rgb(0x342927)
-                    });
-                    let x = (rect.left + rect.right) * 0.5;
-                    let y = (rect.top + rect.bottom) * 0.5;
-                    let radius = (13.0 * scale).min((rect.right - rect.left) * 0.5);
-                    target.FillEllipse(&dot(x, y, radius), brush);
-                } else if highlighted && enabled {
-                    brush.SetColor(&HOVER);
-                    target.FillRoundedRectangle(&rect.as_rounded(5.0 * scale), brush);
+                let size = (rect.right - rect.left).min(rect.bottom - rect.top) * 0.5;
+                let x = (rect.left + rect.right) * 0.5;
+                let y = (rect.top + rect.bottom) * 0.5;
+                let square = PxRect::new(x - size, y - size, x + size, y + size);
+                let button_shape = square.as_rounded((8.0 * scale).min(size));
+                if enabled && (*button == Action::Play || highlighted) {
+                    let background = match (*button == Action::Play, highlighted) {
+                        (true, true) => rgb(0x4a342a),
+                        (true, false) => rgb(0x372926),
+                        (false, _) => HOVER,
+                    };
+                    brush.SetColor(&background);
+                    target.FillRoundedRectangle(&button_shape, brush);
                 }
                 if model.focus == Some(*button) {
                     brush.SetColor(&INK);
-                    target.DrawRoundedRectangle(&rect.as_rounded(4.0 * scale), brush, 1.0, None);
+                    target.DrawRoundedRectangle(&button_shape, brush, 1.0, None);
                 }
             }
             if *button == Action::Rate {
@@ -595,6 +605,36 @@ fn surface(target: &ID2D1DCRenderTarget, brush: &ID2D1SolidColorBrush, size: SIZ
             ..HAIRLINE
         });
         target.DrawRoundedRectangle(&rounded, brush, 1.0, None);
+    }
+}
+
+fn draw_thumb(
+    target: &ID2D1DCRenderTarget,
+    brush: &ID2D1SolidColorBrush,
+    x: f32,
+    y: f32,
+    scale: f32,
+    active: bool,
+    dragging: bool,
+    muted: bool,
+) {
+    let radius = if active { 4.4 } else { 3.1 } * scale;
+    unsafe {
+        if active && !muted {
+            brush.SetColor(&ACCENT_HALO);
+            target.FillEllipse(&dot(x, y, radius + 3.0 * scale), brush);
+        }
+        brush.SetColor(&rgb(0x211d1c));
+        target.FillEllipse(&dot(x, y, radius + 0.9 * scale), brush);
+        let color = if muted {
+            MUTED
+        } else if dragging {
+            HOT_ACCENT
+        } else {
+            ACCENT
+        };
+        brush.SetColor(&color);
+        target.FillEllipse(&dot(x, y, radius), brush);
     }
 }
 

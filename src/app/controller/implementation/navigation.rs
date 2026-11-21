@@ -1,4 +1,21 @@
 use super::*;
+use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
+
+struct WindowFit {
+    work: RECT,
+    frame: (i32, i32),
+    chrome_height: i32,
+    dpi: u32,
+}
+
+impl WindowFit {
+    fn content_limit(&self) -> (u32, u32) {
+        (
+            (self.work.right - self.work.left - self.frame.0).max(1) as u32,
+            (self.work.bottom - self.work.top - self.frame.1 - self.chrome_height).max(1) as u32,
+        )
+    }
+}
 
 impl AppState {
     pub(super) fn current_path(&self) -> Option<&Path> {
@@ -104,118 +121,99 @@ impl AppState {
         }
     }
 
-    pub(super) fn schedule_auto_resize(&self) {
-        if self.keeps_window_size() {
-            return;
+    fn window_fit(&self, video: bool) -> Option<WindowFit> {
+        if !self.settings.auto_resize
+            || self.keeps_window_size()
+            || unsafe { IsIconic(self.hwnd).as_bool() }
+        {
+            return None;
         }
-        unsafe {
-            let _ = KillTimer(Some(self.hwnd), TIMER_AUTO_RESIZE);
-            let _ = SetTimer(
-                Some(self.hwnd),
-                TIMER_AUTO_RESIZE,
-                AUTO_RESIZE_DELAY_MS,
-                None,
-            );
-        }
-    }
-
-    pub(super) unsafe fn auto_resize_window(&mut self) {
-        if self.keeps_window_size() {
-            return;
-        }
-        let video = self.video().is_some();
-        let dimensions = if video {
-            self.take_video_resize()
-        } else {
-            self.document.as_ref().map(ImageDocument::view_dimensions)
-        };
-        let Some((image_width, image_height)) = dimensions else {
-            return;
-        };
         let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST) };
         let mut info = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
         if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
-            return;
+            return None;
         }
-        let max_w = info.rcWork.right - info.rcWork.left;
-        let max_h = info.rcWork.bottom - info.rcWork.top;
-        let chrome = self.chrome_layout();
-        let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(self.hwnd) }.max(96);
-        let adjust = |rect: &mut RECT| unsafe {
-            if video {
-                windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi(
-                    rect,
-                    WS_OVERLAPPEDWINDOW,
-                    false,
-                    WINDOW_EX_STYLE::default(),
-                    dpi,
-                )
+        let dpi = unsafe { GetDpiForWindow(self.hwnd) }.max(96);
+        let mut frame = RECT::default();
+        unsafe {
+            AdjustWindowRectExForDpi(
+                &mut frame,
+                WS_OVERLAPPEDWINDOW,
+                false,
+                WINDOW_EX_STYLE::default(),
+                dpi,
+            )
+            .ok()?;
+        }
+        Some(WindowFit {
+            work: info.rcWork,
+            frame: (frame.right - frame.left, frame.bottom - frame.top),
+            chrome_height: if video {
+                0
             } else {
-                AdjustWindowRectEx(rect, WS_OVERLAPPEDWINDOW, false, WINDOW_EX_STYLE::default())
-            }
+                ChromeLayout::chrome_height(dpi)
+            },
+            dpi,
+        })
+    }
+
+    pub(super) fn opening_preview_target(&self) -> (u32, u32) {
+        self.window_fit(false).map_or_else(
+            || {
+                let area = self.image_area();
+                (
+                    (area.right - area.left).max(1) as u32,
+                    (area.bottom - area.top).max(1) as u32,
+                )
+            },
+            |fit| fit.content_limit(),
+        )
+    }
+
+    pub(super) fn fit_open_media(&self, dimensions: (u32, u32), video: bool) {
+        let Some(fit) = self.window_fit(video) else {
+            return;
         };
-        let mut frame_probe = RECT {
-            left: 0,
-            top: 0,
-            right: 100,
-            bottom: 100,
-        };
-        let _ = adjust(&mut frame_probe);
-        let frame_w = frame_probe.right - frame_probe.left - 100;
-        let frame_h = frame_probe.bottom - frame_probe.top - 100;
-        let chrome_h = chrome.toolbar_height() + chrome.status_height();
-        let max_image_w = (max_w - frame_w).max(1) as f32;
-        let max_image_h = (max_h - frame_h - chrome_h).max(1) as f32;
-        let scale = (max_image_w / image_width.max(1) as f32)
-            .min(max_image_h / image_height.max(1) as f32)
-            .min(1.0);
-        let desired_client_w = (image_width as f32 * scale).round() as i32;
-        let desired_client_h = (image_height as f32 * scale).round() as i32 + chrome_h;
-        let min_client = if video {
-            ((336 * dpi / 96) as i32, (190 * dpi / 96) as i32)
+        let (image_width, image_height) =
+            crate::imaging::fitted_size(dimensions, fit.content_limit(), usize::MAX);
+        let (min_width, min_height) = if video {
+            ((336 * fit.dpi / 96) as i32, (190 * fit.dpi / 96) as i32)
         } else {
             (220, 160)
         };
-        let mut outer = RECT {
-            left: 0,
-            top: 0,
-            right: desired_client_w.max(min_client.0),
-            bottom: desired_client_h.max(min_client.1),
-        };
-        let _ = adjust(&mut outer);
-        let width = (outer.right - outer.left).min(max_w).max(220);
-        let height = (outer.bottom - outer.top).min(max_h).max(150);
+        let width =
+            ((image_width as i32).max(min_width) + fit.frame.0).min(fit.work.right - fit.work.left);
+        let height = ((image_height as i32 + fit.chrome_height).max(min_height) + fit.frame.1)
+            .min(fit.work.bottom - fit.work.top);
         let mut current = RECT::default();
-        let _ = unsafe { GetWindowRect(self.hwnd, &mut current) };
-        let x = current.left.clamp(
-            info.rcWork.left,
-            (info.rcWork.right - width).max(info.rcWork.left),
-        );
-        let y = current.top.clamp(
-            info.rcWork.top,
-            (info.rcWork.bottom - height).max(info.rcWork.top),
-        );
-        if current.left == x
-            && current.top == y
-            && current.right - current.left == width
-            && current.bottom - current.top == height
-        {
+        if unsafe { GetWindowRect(self.hwnd, &mut current) }.is_err() {
             return;
         }
-        let _ = unsafe {
-            SetWindowPos(
-                self.hwnd,
-                None,
-                x,
-                y,
-                width,
-                height,
-                SWP_NOACTIVATE | SWP_NOZORDER,
-            )
-        };
+        let left = current.left.clamp(fit.work.left, fit.work.right - width);
+        let top = current.top.clamp(fit.work.top, fit.work.bottom - height);
+        if current
+            != (RECT {
+                left,
+                top,
+                right: left + width,
+                bottom: top + height,
+            })
+        {
+            unsafe {
+                let _ = SetWindowPos(
+                    self.hwnd,
+                    None,
+                    left,
+                    top,
+                    width,
+                    height,
+                    SWP_NOACTIVATE | SWP_NOZORDER,
+                );
+            }
+        }
     }
 
     pub(super) fn update_title(&self) {

@@ -17,6 +17,7 @@ impl AppState {
         if self.video.as_ref().is_some_and(|view| view.closing) {
             return;
         }
+        let started = Instant::now();
         self.cancel_wheel_navigation();
         // Keep a completed look-ahead result if its wakeup is still queued
         // when the user navigates again.
@@ -44,7 +45,7 @@ impl AppState {
             path.canonicalize().unwrap_or(path)
         };
         self.generation = self.generation.wrapping_add(1);
-        self.load_started = Some(Instant::now());
+        self.load_started = Some(started);
         self.first_visible_cache_hit = false;
         let generation = self.generation;
         // Invalidate active/queued background work even when this target is
@@ -137,13 +138,7 @@ impl AppState {
             initial_archive_member,
             self.hwnd,
             self.lang(),
-            DecodeRequest::preview({
-                let area = self.image_area();
-                (
-                    (area.right - area.left).max(1) as u32,
-                    (area.bottom - area.top).max(1) as u32,
-                )
-            }),
+            DecodeRequest::preview(self.opening_preview_target()),
         );
     }
 
@@ -245,10 +240,10 @@ impl AppState {
                 self.bitmaps.clear();
                 self.set_animation_timer();
                 self.update_title();
-                if self.settings.auto_resize && !self.keeps_window_size() {
-                    self.schedule_auto_resize();
-                }
+                self.fit_open_media((width, height), false);
                 self.invalidate_image();
+                self.present_startup_window();
+                self.prepare_opened_image_view((width, height));
                 if needs_catalog {
                     let catalog_already_requested = self.pending_catalog.as_ref().is_some_and(
                         |(generation, requested_path)| {
@@ -272,6 +267,7 @@ impl AppState {
                     self.restore_archive_fallback();
                     self.update_title();
                     self.update_status(None);
+                    self.present_startup_window();
                     self.show_error(&error.to_string());
                     return;
                 }
@@ -283,6 +279,7 @@ impl AppState {
                     self.restore_archive_fallback();
                     self.update_title();
                     self.update_status(None);
+                    self.present_startup_window();
                     self.show_error(&error.to_string());
                     return;
                 }
@@ -323,9 +320,31 @@ impl AppState {
                     self.restore_archive_fallback();
                     self.update_title();
                     self.update_status(Some(tr(self.lang(), Text::Unsupported)));
+                    self.present_startup_window();
                     self.show_error(&format!("{}{}", error, suffix));
                 }
             }
+        }
+    }
+
+    fn prepare_opened_image_view(&self, size: (u32, u32)) {
+        let area = self.image_area();
+        let target = (
+            (area.right - area.left).max(1) as u32,
+            (area.bottom - area.top).max(1) as u32,
+        );
+        let needed = DecodeRequest::preview(target).layout(size).size;
+        if self.document.as_ref().is_some_and(|document| {
+            let frame = document.current_frame();
+            document.rendered_region == (0, 0, size.0, size.1)
+                && frame.width.saturating_add(1) >= needed.0
+                && frame.height.saturating_add(1) >= needed.1
+        }) {
+            unsafe {
+                let _ = KillTimer(Some(self.hwnd), TIMER_VIEW);
+            }
+        } else {
+            self.schedule_view();
         }
     }
 

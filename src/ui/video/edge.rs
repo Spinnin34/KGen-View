@@ -310,7 +310,7 @@ impl VolumePainter {
             amount_color,
         );
         let center = width * 0.5;
-        let half = 1.7 * scale;
+        let half = 2.35 * scale;
         let rail = PxRect::new(
             center - half,
             layout.track.top,
@@ -321,34 +321,43 @@ impl VolumePainter {
         let nominal = layout.track_y(100);
         let active = dragging || hover == Some(VolumeHit::Track);
         let fill_color = if preferences.muted { MUTED } else { ACCENT };
-        fill(rail, 1.7, TRACK);
+        fill(rail, 2.35, TRACK);
         if knob < rail.bottom {
-            let played = PxRect { top: knob, ..rail };
-            let radius = 1.7_f32.min((rail.bottom - knob) * 0.5 / scale);
-            fill(played, radius, fill_color);
+            let filled = PxRect { top: knob, ..rail };
+            let radius = 2.35_f32.min((rail.bottom - knob) * 0.5 / scale);
+            fill(filled, radius, fill_color);
+            if !preferences.muted && knob < nominal {
+                let boosted = PxRect {
+                    bottom: nominal,
+                    ..filled
+                };
+                let radius = 2.35_f32.min((nominal - knob) * 0.5 / scale);
+                fill(boosted, radius, HOT_ACCENT);
+            }
         }
         unsafe {
             brush.SetColor(&MUTED);
             for sign in [-1.0, 1.0] {
                 let x = center + sign * 9.5 * scale;
                 let mark = PxRect::new(
-                    x - 2.0 * scale,
-                    nominal - 0.5 * scale,
-                    x + 2.0 * scale,
-                    nominal + 0.5 * scale,
+                    x - 2.2 * scale,
+                    nominal - 0.6 * scale,
+                    x + 2.2 * scale,
+                    nominal + 0.6 * scale,
                 );
-                target.FillRectangle(&mark.as_d2d(), brush);
+                target.FillRoundedRectangle(&mark.as_rounded(0.6 * scale), brush);
             }
-            brush.SetColor(&PANEL);
-            let radius = if active { 4.75 } else { 4.0 } * scale;
-            target.FillEllipse(&dot(center, knob, radius + 1.0 * scale), brush);
-            brush.SetColor(&if dragging && !preferences.muted {
-                HOT_ACCENT
-            } else {
-                fill_color
-            });
-            target.FillEllipse(&dot(center, knob, radius), brush);
         }
+        draw_thumb(
+            target,
+            brush,
+            center,
+            knob,
+            scale,
+            active,
+            dragging,
+            preferences.muted,
+        );
         if hover == Some(VolumeHit::Mute) {
             fill(layout.mute, 5.0, HOVER);
         }

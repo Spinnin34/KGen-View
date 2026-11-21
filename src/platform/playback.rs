@@ -8,7 +8,7 @@ use std::{
         mpsc::{self, RecvTimeoutError, Sender},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use windows::{
@@ -29,6 +29,8 @@ pub const WM_PLAYBACK: u32 = WM_APP + 11;
 pub const WM_PLAYBACK_CLOSED: u32 = WM_APP + 12;
 pub const MAX_VOLUME: i32 = 200;
 const REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const OPEN_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
+const OPEN_REFRESH_LIMIT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -126,9 +128,16 @@ impl Playback {
                 let mut generation = 0;
                 let mut previous = None;
                 let mut audio_pending = false;
+                let mut opening_until = None;
                 loop {
                     let request = if player.is_some() {
-                        match receiver.recv_timeout(REFRESH_INTERVAL) {
+                        let interval =
+                            if opening_until.is_some_and(|deadline| Instant::now() < deadline) {
+                                OPEN_REFRESH_INTERVAL
+                            } else {
+                                REFRESH_INTERVAL
+                            };
+                        match receiver.recv_timeout(interval) {
                             Ok(request) => Some(request),
                             Err(RecvTimeoutError::Timeout) => None,
                             Err(RecvTimeoutError::Disconnected) => break,
@@ -146,10 +155,12 @@ impl Playback {
                         }) if requested == latest.load(Ordering::Acquire) => {
                             generation = requested;
                             previous = None;
+                            opening_until = None;
                             match Player::open(player.take(), surface, &path, preferences) {
                                 Ok(opened) => {
                                     player = Some(opened);
                                     audio_pending = true;
+                                    opening_until = Some(Instant::now() + OPEN_REFRESH_LIMIT);
                                 }
                                 Err(error) => snapshot = Some(PlaybackStatus::new(error)),
                             }
@@ -173,6 +184,11 @@ impl Playback {
                     }
                     if let Some(current) = &mut player {
                         let mut status = current.status();
+                        if status.dimensions.is_some()
+                            || matches!(status.phase, Phase::Ended | Phase::Failed)
+                        {
+                            opening_until = None;
+                        }
                         if status.phase == Phase::Ended
                             && current.preferences.looping
                             && generation == latest.load(Ordering::Acquire)

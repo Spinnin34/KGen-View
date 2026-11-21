@@ -449,13 +449,8 @@ pub(super) unsafe extern "system" fn window_proc(
                         .catalog_loader
                         .submit(state.generation, path.to_path_buf(), state.hwnd);
                 }
-            } else if wparam.0 == TIMER_AUTO_RESIZE {
-                unsafe {
-                    let _ = KillTimer(Some(hwnd), TIMER_AUTO_RESIZE);
-                    if state.settings.auto_resize && !state.keeps_window_size() {
-                        state.auto_resize_window();
-                    }
-                }
+            } else if wparam.0 == TIMER_STARTUP_WINDOW {
+                state.present_startup_window();
             }
             LRESULT(0)
         }

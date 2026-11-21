@@ -35,6 +35,7 @@ impl AppState {
             target: None,
             bitmaps: Vec::new(),
             bitmap_size: (0, 0),
+            startup_window_pending: false,
             first_visible: None,
             first_visible_cache_hit: false,
             bitmap_dirty: true,

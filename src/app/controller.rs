@@ -57,22 +57,21 @@ use windows::{
                 IShellWindows, IWebBrowser2, ShellExecuteW, ShellWindows,
             },
             WindowsAndMessaging::{
-                AdjustWindowRectEx, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_STYLE,
-                GWLP_USERDATA, GetClientRect, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
-                GetWindowRect, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, IDI_APPLICATION, IsIconic,
-                IsWindow, IsZoomed, KillTimer, LoadCursorW, LoadIconW, MB_ICONERROR,
-                MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK, MB_YESNO, MB_YESNOCANCEL, MSG,
-                MessageBoxW, PostMessageW, PostQuitMessage, RegisterClassExW, SW_RESTORE, SW_SHOW,
-                SW_SHOWNORMAL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-                SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW, SetForegroundWindow, SetTimer,
-                SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage,
-                WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY,
-                WM_DPICHANGED, WM_DRAWITEM, WM_DROPFILES, WM_ERASEBKGND, WM_KEYDOWN,
-                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MEASUREITEM,
-                WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE,
-                WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_CLIPCHILDREN, WS_OVERLAPPEDWINDOW, WS_POPUP,
-                WS_VISIBLE,
+                CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW,
+                DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_STYLE, GWLP_USERDATA,
+                GetClientRect, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowRect,
+                HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, IDI_APPLICATION, IsIconic, IsWindow,
+                IsZoomed, KillTimer, LoadCursorW, LoadIconW, MB_ICONERROR, MB_ICONINFORMATION,
+                MB_ICONQUESTION, MB_OK, MB_YESNO, MB_YESNOCANCEL, MSG, MessageBoxW, PostMessageW,
+                PostQuitMessage, RegisterClassExW, SW_RESTORE, SW_SHOWNORMAL, SWP_FRAMECHANGED,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SendMessageW,
+                SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+                ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE,
+                WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_DRAWITEM, WM_DROPFILES,
+                WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+                WM_MBUTTONUP, WM_MEASUREITEM, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE,
+                WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+                WS_CLIPCHILDREN, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_VISIBLE,
             },
         },
     },
@@ -122,11 +121,11 @@ const WM_CONVERSION_CLOSED: u32 = crate::platform::conversion_dialog::WM_CONVERS
 const TIMER_ANIMATION: usize = 1;
 const TIMER_SLIDESHOW: usize = 2;
 const TIMER_FOLDER_REFRESH: usize = 3;
-const TIMER_AUTO_RESIZE: usize = 4;
+const TIMER_STARTUP_WINDOW: usize = 4;
 const TIMER_AUTO_ADVANCE: usize = 6;
 const TIMER_WHEEL_NAVIGATION: usize = 7;
 const FOLDER_REFRESH_INTERVAL_MS: u32 = 5_000;
-const AUTO_RESIZE_DELAY_MS: u32 = 120;
+const STARTUP_WINDOW_DELAY_MS: u32 = 700;
 const WHEEL_NAVIGATION_COALESCE_MS: u32 = 24;
 #[derive(Clone, Copy, Debug)]
 enum ZoomMode {
@@ -219,6 +218,7 @@ struct AppState {
     target: Option<ID2D1HwndRenderTarget>,
     bitmaps: Vec<BitmapTile>,
     bitmap_size: (u32, u32),
+    startup_window_pending: bool,
     first_visible: Option<Instant>,
     first_visible_cache_hit: bool,
     bitmap_dirty: bool,
