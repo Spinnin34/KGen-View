@@ -12,9 +12,9 @@ use windows::{
         Graphics::Imaging::{
             CLSID_WICImagingFactory2, GUID_ContainerFormatJpeg, GUID_WICPixelFormat24bppBGR,
             GUID_WICPixelFormat32bppPBGRA, IWICBitmapEncoderInfo, IWICBitmapFrameDecode,
-            IWICBitmapSource, IWICColorContext, IWICImagingFactory, IWICMetadataQueryReader,
-            IWICMetadataQueryWriter, WICBitmapDitherTypeNone, WICBitmapEncoderNoCache,
-            WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand, WICEncoder, WICRect,
+            IWICBitmapSource, IWICImagingFactory, IWICMetadataQueryReader, IWICMetadataQueryWriter,
+            WICBitmapDitherTypeNone, WICBitmapEncoderNoCache, WICBitmapPaletteTypeCustom,
+            WICDecodeMetadataCacheOnDemand, WICEncoder, WICRect,
         },
         System::{
             Com::StructuredStorage::{PROPVARIANT, PropVariantClear},

@@ -403,32 +403,37 @@ pub(super) fn color_managed_source_from(
     source: IWICBitmapSource,
 ) -> ImageResult<IWICBitmapSource> {
     let mut count = 0u32;
-    let mut contexts: Vec<Option<IWICColorContext>> = Vec::new();
-    // WIC reports the required context count even when the first call has no
-    // output slots. That sizing call commonly returns INSUFFICIENTBUFFER, so
-    // its HRESULT must not decide whether the source has an ICC profile.
-    let _ = unsafe { frame.GetColorContexts(&mut contexts, &mut count) };
-    let has_profile = (1..=16).contains(&count);
-    if has_profile {
-        contexts.resize_with(count as usize, || None);
-        if unsafe { frame.GetColorContexts(&mut contexts, &mut count) }.is_ok()
-            && let Some(source_context) = contexts.into_iter().flatten().next()
-        {
-            let destination = unsafe { factory.CreateColorContext()? };
-            if unsafe { destination.InitializeFromExifColorSpace(1) }.is_ok() {
-                let transform = unsafe { factory.CreateColorTransformer()? };
-                if unsafe {
-                    transform.Initialize(
-                        &source,
-                        &source_context,
-                        &destination,
-                        &GUID_WICPixelFormat32bppPBGRA,
-                    )
-                }
-                .is_ok()
-                {
-                    return Ok(transform.cast()?);
-                }
+    // The sizing call requires a null array. WIC populates initialized
+    // IWICColorContext objects when called again with the requested slots.
+    let _ = unsafe {
+        (Interface::vtable(frame).GetColorContexts)(
+            frame.as_raw(),
+            0,
+            std::ptr::null_mut(),
+            &mut count,
+        )
+    };
+    if (1..=16).contains(&count)
+        && let Ok(mut contexts) = (0..count)
+            .map(|_| unsafe { factory.CreateColorContext().map(Some) })
+            .collect::<windows::core::Result<Vec<_>>>()
+        && unsafe { frame.GetColorContexts(&mut contexts, &mut count) }.is_ok()
+        && let Some(source_context) = contexts.into_iter().take(count as usize).flatten().next()
+    {
+        let destination = unsafe { factory.CreateColorContext()? };
+        if unsafe { destination.InitializeFromExifColorSpace(1) }.is_ok() {
+            let transform = unsafe { factory.CreateColorTransformer()? };
+            if unsafe {
+                transform.Initialize(
+                    &source,
+                    &source_context,
+                    &destination,
+                    &GUID_WICPixelFormat32bppPBGRA,
+                )
+            }
+            .is_ok()
+            {
+                return Ok(transform.cast()?);
             }
         }
     }
