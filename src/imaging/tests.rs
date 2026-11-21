@@ -240,6 +240,7 @@ fn wic_orientation_matches_all_eight_exif_transforms() {
             "orientation {orientation}"
         );
     }
+    drop(factory);
     if initialized {
         unsafe {
             CoUninitialize();

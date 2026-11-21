@@ -229,6 +229,7 @@ impl DecodeService {
                         }
                     }
                 }
+                drop(wic_factory);
                 if initialized {
                     unsafe { CoUninitialize() };
                 }
@@ -333,6 +334,7 @@ impl DecodeService {
                         wait_for_prefetch_ack(&worker_prefetch_ack, &should_cancel);
                     }
                 }
+                drop(wic_factory);
                 if initialized {
                     unsafe { CoUninitialize() };
                 }
