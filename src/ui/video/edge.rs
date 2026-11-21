@@ -14,6 +14,7 @@ pub struct EdgeLayout {
     client: RECT,
     bottom: i32,
     side: i32,
+    inset: i32,
     scale: f32,
 }
 
@@ -25,11 +26,16 @@ impl EdgeLayout {
             .unwrap_or(client.bottom)
             .max(client.top + height * 3 / 5);
         let width = (client.right - client.left).max(0);
-        let side = client.right - ((68.0 * scale).round() as i32).min(width * 2 / 5);
+        let inset = panel.map_or_else(
+            || horizontal_inset(width, scale),
+            |panel| panel.offset.x - client.left,
+        );
+        let side = client.right - (inset + (62.0 * scale).round() as i32).min(width * 2 / 5);
         Self {
             client,
             bottom,
             side,
+            inset,
             scale,
         }
     }
@@ -73,12 +79,12 @@ impl EdgeLayout {
         let room = self.bottom - client.top;
         let scale = self
             .scale
-            .min(room as f32 / 158.0)
-            .min(width as f32 / 120.0);
-        let inset = (8.0 * scale).round() as i32;
+            .min(room as f32 / 174.0)
+            .min(width as f32 / 160.0);
+        let inset = self.inset;
         let size = SIZE {
-            cx: (44.0 * scale).round() as i32,
-            cy: (142.0 * scale).round() as i32,
+            cx: (50.0 * scale).round() as i32,
+            cy: (158.0 * scale).round() as i32,
         };
         let vertical_inset = inset.min((room - size.cy) / 2);
         let offset = POINT {
@@ -94,11 +100,11 @@ impl EdgeLayout {
             scale,
             track: PxRect::new(
                 6.0 * scale,
-                (28.0 * scale).round(),
-                38.0 * scale,
-                (108.0 * scale).round(),
+                (32.0 * scale).round(),
+                44.0 * scale,
+                (120.0 * scale).round(),
             ),
-            mute: PxRect::new(6.0 * scale, 116.0 * scale, 38.0 * scale, 138.0 * scale),
+            mute: PxRect::new(8.0 * scale, 128.0 * scale, 42.0 * scale, 153.0 * scale),
         })
     }
 }
@@ -258,13 +264,13 @@ impl VolumePainter {
                 percent: text_format(
                     &factory,
                     w!("Consolas"),
-                    11.0 * scale,
+                    12.0 * scale,
                     DWRITE_TEXT_ALIGNMENT_CENTER,
                 )?,
                 icon: text_format(
                     &factory,
                     w!("Segoe MDL2 Assets"),
-                    14.0 * scale,
+                    15.0 * scale,
                     DWRITE_TEXT_ALIGNMENT_CENTER,
                 )?,
                 brush: unsafe { target.CreateSolidColorBrush(&INK, None)? },
@@ -287,56 +293,70 @@ impl VolumePainter {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
         };
-        let panel = PxRect::new(0.0, 0.0, layout.size.cx as f32, layout.size.cy as f32);
-        fill(panel, 5.0, PANEL);
-        let amount_color = if preferences.muted { MUTED } else { INK };
+        surface(target, brush, layout.size, scale);
+        let width = layout.size.cx as f32;
+        let amount_color = if preferences.muted {
+            MUTED
+        } else if preferences.volume > 100 {
+            ACCENT
+        } else {
+            INK
+        };
         let volume: Vec<u16> = format!("{}%", preferences.volume).encode_utf16().collect();
         label(
             &volume,
-            PxRect::new(0.0, 4.0 * scale, panel.right, 22.0 * scale),
+            PxRect::new(0.0, 5.0 * scale, width, 25.0 * scale),
             &painter.percent,
             amount_color,
         );
-        let center = panel.right * 0.5;
+        let center = width * 0.5;
+        let half = 1.7 * scale;
         let rail = PxRect::new(
-            center - scale,
+            center - half,
             layout.track.top,
-            center + scale,
+            center + half,
             layout.track.bottom,
         );
         let knob = layout.track_y(preferences.volume);
         let nominal = layout.track_y(100);
         let active = dragging || hover == Some(VolumeHit::Track);
         let fill_color = if preferences.muted { MUTED } else { ACCENT };
+        fill(rail, 1.7, TRACK);
+        if knob < rail.bottom {
+            let played = PxRect { top: knob, ..rail };
+            let radius = 1.7_f32.min((rail.bottom - knob) * 0.5 / scale);
+            fill(played, radius, fill_color);
+        }
         unsafe {
-            brush.SetColor(&TRACK);
-            target.FillRectangle(&rail.as_d2d(), brush);
             brush.SetColor(&MUTED);
-            target.FillRectangle(
-                &PxRect::new(
-                    center + 4.0 * scale,
+            for sign in [-1.0, 1.0] {
+                let x = center + sign * 9.5 * scale;
+                let mark = PxRect::new(
+                    x - 2.0 * scale,
                     nominal - 0.5 * scale,
-                    center + 8.0 * scale,
+                    x + 2.0 * scale,
                     nominal + 0.5 * scale,
-                )
-                .as_d2d(),
-                brush,
-            );
-            brush.SetColor(&fill_color);
-            if knob < rail.bottom {
-                target.FillRectangle(&PxRect { top: knob, ..rail }.as_d2d(), brush);
+                );
+                target.FillRectangle(&mark.as_d2d(), brush);
             }
-            let radius = if active { 4.0 } else { 3.25 } * scale;
+            brush.SetColor(&PANEL);
+            let radius = if active { 4.75 } else { 4.0 } * scale;
+            target.FillEllipse(&dot(center, knob, radius + 1.0 * scale), brush);
+            brush.SetColor(&if dragging && !preferences.muted {
+                HOT_ACCENT
+            } else {
+                fill_color
+            });
             target.FillEllipse(&dot(center, knob, radius), brush);
         }
         if hover == Some(VolumeHit::Mute) {
-            fill(layout.mute, 4.0, HOVER);
+            fill(layout.mute, 5.0, HOVER);
         }
         label(
             &[speaker_glyph(preferences)],
             layout.mute,
             &painter.icon,
-            amount_color,
+            if preferences.muted { MUTED } else { INK },
         );
         Ok(())
     }
@@ -376,11 +396,63 @@ mod tests {
             .volume()
             .unwrap();
         assert!(volume.offset.y >= client.top && volume.offset.y + volume.size.cy <= client.bottom);
-        assert_eq!(volume.value(-100), MAX_VOLUME);
+        assert_eq!(volume.value(-100), 200);
         assert_eq!(volume.value(500), 0);
         assert_eq!(volume.value(volume.track_y(100).round() as i32), 100);
         assert_eq!(volume.value(volume.track.top as i32), MAX_VOLUME);
         assert_eq!(volume.value(volume.track.bottom as i32), 0);
+    }
+
+    #[test]
+    fn bottom_dock_preserves_margins_and_timeline_endpoints_at_each_width() {
+        for dpi in [1.0, 1.5, 2.0] {
+            for (width, height) in [(100, 64), (260, 200), (860, 480), (3840, 2160)] {
+                let client = RECT {
+                    left: 5,
+                    top: 7,
+                    right: 5 + width,
+                    bottom: 7 + height,
+                };
+                let panel = PanelLayout::new(client, dpi, true).unwrap();
+                let margin = panel.offset.x - client.left;
+                assert!(margin > 0 && margin * 2 + panel.size.cx == width);
+                assert!(panel.size.cx as f32 >= width as f32 * 0.87);
+                assert!(
+                    panel.offset.y > client.top && panel.offset.y + panel.size.cy < client.bottom
+                );
+                assert_eq!(panel.fraction(0), 0.0);
+                assert_eq!(panel.fraction(panel.size.cx - 1), 1.0);
+                assert_eq!(
+                    panel.hit(POINT {
+                        x: 1,
+                        y: panel.size.cy - 1
+                    }),
+                    Some(Hit::Seek)
+                );
+                for (action, rect) in &panel.buttons {
+                    let point = POINT {
+                        x: ((rect.left + rect.right) * 0.5).round() as i32,
+                        y: ((rect.top + rect.bottom) * 0.5).round() as i32,
+                    };
+                    assert_eq!(panel.hit(point), Some(Hit::Button(*action)));
+                }
+            }
+        }
+        let small = RECT {
+            left: 0,
+            top: 0,
+            right: 240,
+            bottom: 200,
+        };
+        let full = RECT {
+            right: 800,
+            bottom: 600,
+            ..small
+        };
+        assert!(
+            PanelLayout::new(small, 1.0, false).unwrap().size.cy
+                < PanelLayout::new(full, 1.0, false).unwrap().size.cy
+        );
     }
 
     #[test]

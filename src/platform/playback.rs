@@ -27,7 +27,7 @@ use crate::mailbox::Mailbox;
 
 pub const WM_PLAYBACK: u32 = WM_APP + 11;
 pub const WM_PLAYBACK_CLOSED: u32 = WM_APP + 12;
-pub const MAX_VOLUME: i32 = 150;
+pub const MAX_VOLUME: i32 = 200;
 const REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -53,6 +53,7 @@ struct VideoPanel {
     zone: EdgeZone,
     reveal: Reveal,
     hover: Option<Hit>,
+    seek_hover: Option<f32>,
     focus: Option<Action>,
     pressed: Option<Hit>,
     drag: Option<f32>,
@@ -74,6 +75,7 @@ impl VideoPanel {
             zone: EdgeZone::None,
             reveal: Reveal::default(),
             hover: None,
+            seek_hover: None,
             focus: None,
             pressed: None,
             drag: None,
@@ -105,6 +107,7 @@ impl VideoPanel {
 
     fn clear_input(&mut self) {
         self.hover = None;
+        self.seek_hover = None;
         self.focus = None;
         self.pressed = None;
         self.drag = None;
@@ -569,6 +572,7 @@ impl AppState {
             can_navigate,
             update_busy,
             hover: panel.hover,
+            seek_hover: panel.seek_hover,
             focus: panel.focus,
             drag: panel.drag,
             notice: view.notice.as_deref(),
@@ -734,7 +738,7 @@ impl AppState {
         panel.cursor = Some(screen);
         panel.zone = edge;
         panel.reveal.pointer(zone == EdgeZone::Bottom, moved, now);
-        let before = (panel.hover, panel.drag, panel.focus);
+        let before = (panel.hover, panel.seek_hover, panel.drag, panel.focus);
         if moved && zone == EdgeZone::Bottom {
             panel.focus = None;
         }
@@ -742,13 +746,15 @@ impl AppState {
             panel.hover = (zone == EdgeZone::Bottom && panel.layer.visible)
                 .then(|| layout.hit(local))
                 .flatten();
+            panel.seek_hover = (status.seekable && panel.hover == Some(Hit::Seek))
+                .then(|| layout.fraction(local.x));
             if panel.drag.is_some() {
                 panel.drag = Some(layout.fraction(local.x));
             }
         }
         let mut redraw = (panel.wants_visible(pinned, now) && panel.layout.is_some())
             != panel.layer.visible
-            || before != (panel.hover, panel.drag, panel.focus)
+            || before != (panel.hover, panel.seek_hover, panel.drag, panel.focus)
             || panel.timeline_changed(status);
         let mut set_volume = None;
         if let Some(volume) = &mut panel.volume
@@ -871,6 +877,7 @@ impl AppState {
                 panel.focus = layout.focus(panel.focus, reverse, &model);
             }
             panel.hover = None;
+            panel.seek_hover = None;
             panel.reveal.show();
             view.panel = Some(panel);
             self.render_video_panel();

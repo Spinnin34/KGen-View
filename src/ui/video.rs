@@ -10,8 +10,9 @@ use windows::{
                 DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL,
                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT,
-                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory,
-                IDWriteFactory, IDWriteTextFormat,
+                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
+                DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory, IDWriteFactory,
+                IDWriteTextFormat,
             },
         },
     },
@@ -34,12 +35,13 @@ const ACCENT: D2D1_COLOR_F = rgb(0xff8d42);
 const HOT_ACCENT: D2D1_COLOR_F = rgb(0xffb277);
 const INK: D2D1_COLOR_F = rgb(0xf4f4f4);
 const MUTED: D2D1_COLOR_F = rgb(0xb4b4b8);
-const TRACK: D2D1_COLOR_F = rgb(0x545459);
+const TRACK: D2D1_COLOR_F = rgb(0x4e4e54);
+const HAIRLINE: D2D1_COLOR_F = rgb(0x3d3d42);
 const PANEL: D2D1_COLOR_F = D2D1_COLOR_F {
     a: 0.94,
-    ..rgb(0x19191b)
+    ..rgb(0x19191d)
 };
-const HOVER: D2D1_COLOR_F = rgb(0x363639);
+const HOVER: D2D1_COLOR_F = rgb(0x36363d);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -68,6 +70,7 @@ pub struct PanelLayout {
     scale: f32,
     buttons: Vec<(Action, PxRect)>,
     seek: PxRect,
+    time: PxRect,
     caption: PxRect,
 }
 
@@ -79,24 +82,25 @@ impl PanelLayout {
             return None;
         }
         let scale = dpi_scale
-            .min(height as f32 / 70.0)
+            .min(height as f32 / 78.0)
+            .min((width as f32 / 360.0).max(0.72))
             .min(width as f32 / 132.0);
-        let inset = 8.0 * scale;
+        let inset = horizontal_inset(width, scale);
         let size = SIZE {
-            cx: (width as f32 - 2.0 * inset).min(704.0 * scale).round() as i32,
-            cy: (54.0 * scale).round() as i32,
+            cx: width - 2 * inset,
+            cy: (58.0 * scale).round() as i32,
         };
         let width = size.cx as f32;
         let offset = POINT {
-            x: client.left + (client.right - client.left - size.cx) / 2,
-            y: client.bottom - size.cy - inset.round() as i32,
+            x: client.left + inset,
+            y: client.bottom - size.cy - (10.0 * scale).round() as i32,
         };
-        let pad = 6.0 * scale;
+        let pad = 8.0 * scale;
         let right = width - pad;
         let seek = PxRect::new(
-            12.0 * scale,
-            35.0 * scale,
-            width - 12.0 * scale,
+            14.0 * scale,
+            38.0 * scale,
+            width - 14.0 * scale,
             size.cy as f32,
         );
         let primary = [Action::Previous, Action::Play, Action::Next];
@@ -118,9 +122,9 @@ impl PanelLayout {
         } else {
             0.0
         };
-        let button_width = (31.0 * scale)
+        let button_width = (32.0 * scale)
             .min((right - pad - rate_extra) / (primary.len() + secondary.len()) as f32);
-        let row = |x, width| PxRect::new(x, 4.0 * scale, x + width, 35.0 * scale);
+        let row = |x, width| PxRect::new(x, 5.0 * scale, x + width, 38.0 * scale);
         let mut x = pad;
         let mut buttons = Vec::new();
         for action in primary {
@@ -129,7 +133,10 @@ impl PanelLayout {
         }
         let left = x;
         x = right - button_width * secondary.len() as f32 - rate_extra;
-        let caption = row(left, x - left).inset(2.0 * scale);
+        let free = (x - left).max(0.0);
+        let time_width = free.min(147.0 * scale);
+        let time = row(left + 11.0 * scale, (time_width - 11.0 * scale).max(0.0));
+        let caption = row(left + time_width, free - time_width);
         for action in secondary {
             let width = button_width
                 + if action == Action::Rate {
@@ -146,6 +153,7 @@ impl PanelLayout {
             scale,
             buttons,
             seek,
+            time,
             caption,
         })
     }
@@ -226,6 +234,7 @@ pub struct Model<'a> {
     pub can_navigate: bool,
     pub update_busy: bool,
     pub hover: Option<Hit>,
+    pub seek_hover: Option<f32>,
     pub focus: Option<Action>,
     pub drag: Option<f32>,
     pub notice: Option<&'a str>,
@@ -367,8 +376,8 @@ impl Painter {
             let format = |name, size, align| text_format(&factory, name, size * scale, align);
             Ok(Self {
                 scale,
-                icons: format(w!("Segoe MDL2 Assets"), 14.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
-                time: format(w!("Consolas"), 11.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
+                icons: format(w!("Segoe MDL2 Assets"), 15.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
+                time: format(w!("Consolas"), 11.5, DWRITE_TEXT_ALIGNMENT_LEADING)?,
                 label: format(w!("Segoe UI"), 11.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 brush: target.CreateSolidColorBrush(&rgb(0xf1f1f6), None)?,
             })
@@ -395,12 +404,8 @@ impl Painter {
     unsafe fn scene(&self, target: &ID2D1DCRenderTarget, layout: &PanelLayout, model: &Model<'_>) {
         const DISABLED: D2D1_COLOR_F = rgb(0x77777b);
         let scale = layout.scale;
-        let panel = PxRect::new(0.0, 0.0, layout.size.cx as f32, layout.size.cy as f32);
         let brush = &self.brush;
-        unsafe {
-            brush.SetColor(&PANEL);
-            target.FillRoundedRectangle(&panel.as_rounded(5.0 * scale), brush);
-        }
+        surface(target, brush, layout.size, scale);
         let draw_chars = |chars: &[u16], area: PxRect, format: &IDWriteTextFormat, color| unsafe {
             brush.SetColor(color);
             target.DrawText(
@@ -423,42 +428,101 @@ impl Painter {
         if let Some(message) = model.message() {
             label(message, layout.seek, &self.label, &INK);
         } else {
+            let clock = layout.time;
+            let clock_width = clock.right - clock.left;
+            let preview = model.drag.or(model.seek_hover);
+            if clock_width >= 30.0 * scale {
+                let elapsed = time_label(timeline_elapsed(model.status, preview));
+                let duration = time_label(model.status.duration_ms.max(0));
+                let elapsed_width = elapsed.len() as f32 * 6.4 * scale;
+                let duration_left = clock.left + elapsed_width + 10.0 * scale;
+                let center_y = (clock.top + clock.bottom) * 0.5;
+                let split = PxRect::new(
+                    clock.left - 6.0 * scale,
+                    center_y - 7.0 * scale,
+                    clock.left - 5.0 * scale,
+                    center_y + 7.0 * scale,
+                );
+                unsafe {
+                    brush.SetColor(&HAIRLINE);
+                    target.FillRectangle(&split.as_d2d(), brush);
+                }
+                label(
+                    &elapsed,
+                    clock,
+                    &self.time,
+                    &if preview.is_some() { HOT_ACCENT } else { INK },
+                );
+                if model.status.duration_ms > 0
+                    && clock.right - duration_left >= (duration.len() + 2) as f32 * 6.4 * scale
+                {
+                    label(
+                        &format!("/ {duration}"),
+                        PxRect {
+                            left: duration_left,
+                            ..clock
+                        },
+                        &self.time,
+                        &MUTED,
+                    );
+                }
+            }
             let caption = match model.hover {
                 Some(Hit::Button(button)) => Some(model.label(button)),
                 _ => model.focus.map(|button| model.label(button)),
             };
-            let caption_width = layout.caption.right - layout.caption.left;
-            if let Some(caption) = caption
-                .filter(|text| caption_width >= (text.chars().count() as f32 * 5.4 + 6.0) * scale)
-            {
-                label(caption, layout.caption, &self.label, &INK);
-            } else if caption_width >= 44.0 * scale {
-                let elapsed = time_label(timeline_elapsed(model.status, model.drag));
-                let duration = time_label(model.status.duration_ms.max(0));
-                let time_width = (elapsed.len() + 3 + duration.len()) as f32 * 6.1 * scale;
-                let text = if model.status.duration_ms > 0 && caption_width >= time_width {
-                    format!("{elapsed} / {duration}")
-                } else {
-                    elapsed
-                };
-                label(&text, layout.caption, &self.time, &MUTED);
+            if let Some(caption) = caption.filter(|text| {
+                layout.caption.right - layout.caption.left
+                    >= (text.chars().count() as f32 * 5.4 + 6.0) * scale
+            }) {
+                label(caption, layout.caption, &self.label, &MUTED);
             }
             let seek = layout.seek;
             let y = (seek.top + seek.bottom) * 0.5;
             let x = layout.playhead_x(model.status, model.drag);
-            let active =
-                model.status.seekable && (model.hover == Some(Hit::Seek) || model.drag.is_some());
-            let half = if active { 1.25 } else { 0.9 } * scale;
+            let active = model.status.seekable && preview.is_some();
+            let half = if active { 1.75 } else { 1.25 } * scale;
             let rail = PxRect::new(seek.left, y - half, seek.right, y + half);
             unsafe {
                 brush.SetColor(&TRACK);
-                target.FillRectangle(&rail.as_d2d(), brush);
+                target.FillRoundedRectangle(&rail.as_rounded(half), brush);
                 brush.SetColor(&ACCENT);
                 if x > rail.left {
-                    target.FillRectangle(&PxRect { right: x, ..rail }.as_d2d(), brush);
+                    let played = PxRect { right: x, ..rail };
+                    target.FillRoundedRectangle(
+                        &played.as_rounded(half.min((x - rail.left) * 0.5)),
+                        brush,
+                    );
                 }
-                if active {
-                    target.FillEllipse(&dot(x, y, 3.5 * scale), brush);
+                if model.status.seekable {
+                    let radius = if model.drag.is_some() {
+                        4.75
+                    } else if active {
+                        4.0
+                    } else {
+                        2.65
+                    } * scale;
+                    brush.SetColor(&if model.drag.is_some() {
+                        HOT_ACCENT
+                    } else {
+                        ACCENT
+                    });
+                    target.FillEllipse(&dot(x, y, radius), brush);
+                    if model.drag.is_none()
+                        && let Some(fraction) = model.seek_hover
+                    {
+                        let cursor = rail.left + (rail.right - rail.left) * fraction;
+                        if (cursor - x).abs() > 7.0 * scale {
+                            brush.SetColor(&MUTED);
+                            let marker = PxRect::new(
+                                cursor - 0.55 * scale,
+                                y - 3.8 * scale,
+                                cursor + 0.55 * scale,
+                                y + 3.8 * scale,
+                            );
+                            target.FillRectangle(&marker.as_d2d(), brush);
+                        }
+                    }
                 }
             }
         }
@@ -481,9 +545,19 @@ impl Painter {
                 INK
             };
             unsafe {
-                if highlighted && enabled {
+                if *button == Action::Play && enabled {
+                    brush.SetColor(&if highlighted {
+                        rgb(0x47332a)
+                    } else {
+                        rgb(0x342927)
+                    });
+                    let x = (rect.left + rect.right) * 0.5;
+                    let y = (rect.top + rect.bottom) * 0.5;
+                    let radius = (13.0 * scale).min((rect.right - rect.left) * 0.5);
+                    target.FillEllipse(&dot(x, y, radius), brush);
+                } else if highlighted && enabled {
                     brush.SetColor(&HOVER);
-                    target.FillRoundedRectangle(&rect.as_rounded(4.0 * scale), brush);
+                    target.FillRoundedRectangle(&rect.as_rounded(5.0 * scale), brush);
                 }
                 if model.focus == Some(*button) {
                     brush.SetColor(&INK);
@@ -501,6 +575,26 @@ impl Painter {
                 draw_chars(&[model.glyph(*button)], rect, &self.icons, &color);
             }
         }
+    }
+}
+
+fn horizontal_inset(width: i32, scale: f32) -> i32 {
+    (width as f32 * 0.022)
+        .clamp(8.0 * scale, 24.0 * scale)
+        .round() as i32
+}
+
+fn surface(target: &ID2D1DCRenderTarget, brush: &ID2D1SolidColorBrush, size: SIZE, scale: f32) {
+    let bounds = PxRect::new(0.5, 0.5, size.cx as f32 - 0.5, size.cy as f32 - 0.5);
+    let rounded = bounds.as_rounded(7.0 * scale);
+    unsafe {
+        brush.SetColor(&PANEL);
+        target.FillRoundedRectangle(&rounded, brush);
+        brush.SetColor(&D2D1_COLOR_F {
+            a: 0.86,
+            ..HAIRLINE
+        });
+        target.DrawRoundedRectangle(&rounded, brush, 1.0, None);
     }
 }
 
