@@ -22,7 +22,7 @@ impl EdgeLayout {
     pub fn new(client: RECT, scale: f32, panel: Option<&PanelLayout>) -> Self {
         let height = (client.bottom - client.top).max(0);
         let bottom = panel
-            .map(|panel| panel.offset.y - (17.0 * panel.scale).round() as i32)
+            .map(|panel| panel.body_top() - (17.0 * panel.scale).round() as i32)
             .unwrap_or(client.bottom)
             .max(client.top + height * 3 / 5);
         let width = (client.right - client.left).max(0);
@@ -293,7 +293,12 @@ impl VolumePainter {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
         };
-        surface(target, brush, layout.size, scale);
+        surface(
+            target,
+            brush,
+            PxRect::new(0.0, 0.0, layout.size.cx as f32, layout.size.cy as f32),
+            scale,
+        );
         let width = layout.size.cx as f32;
         let amount_color = if preferences.muted {
             MUTED
@@ -434,7 +439,7 @@ mod tests {
                 assert_eq!(
                     panel.hit(POINT {
                         x: 1,
-                        y: panel.size.cy - 1
+                        y: ((panel.seek.top + panel.seek.bottom) * 0.5).round() as i32
                     }),
                     Some(Hit::Seek)
                 );
@@ -461,6 +466,49 @@ mod tests {
         assert!(
             PanelLayout::new(small, 1.0, false).unwrap().size.cy
                 < PanelLayout::new(full, 1.0, false).unwrap().size.cy
+        );
+    }
+
+    #[test]
+    fn timeline_snaps_to_a_nearby_chapter_without_changing_other_seeks() {
+        let panel = PanelLayout::new(
+            RECT {
+                left: 0,
+                top: 0,
+                right: 800,
+                bottom: 450,
+            },
+            1.0,
+            false,
+        )
+        .unwrap();
+        let chapters = [
+            Chapter {
+                start_ms: 0,
+                name: "Intro".into(),
+            },
+            Chapter {
+                start_ms: 22_000,
+                name: "Scene".into(),
+            },
+            Chapter {
+                start_ms: 48_000,
+                name: "End".into(),
+            },
+        ];
+        let marker = (panel.seek.left + (panel.seek.right - panel.seek.left) * 0.22).round() as i32;
+        assert_eq!(panel.seek_fraction(marker + 3, 100_000, &chapters), 0.22);
+        assert_eq!(
+            panel.seek_fraction(marker + 10, 100_000, &chapters),
+            panel.fraction(marker + 10)
+        );
+        assert_eq!(
+            panel.seek_fraction(panel.size.cx - 1, 100_000, &chapters),
+            1.0
+        );
+        assert_eq!(
+            panel.seek_fraction(marker, 0, &chapters),
+            panel.fraction(marker)
         );
     }
 

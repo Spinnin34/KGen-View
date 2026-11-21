@@ -1,7 +1,8 @@
 use super::*;
 use crate::{
     platform::playback::{
-        Control, MAX_VOLUME, Phase, Playback, PlaybackStatus, Preferences, report_failure,
+        Control, MAX_VOLUME, MEDIA_ITEM_LIMIT, MediaDetails, Phase, Playback, PlaybackStatus,
+        Preferences, Track, report_failure,
     },
     ui::video::{
         Action, EdgeLayout, EdgeZone, Hit, Layer, LayerKind, Model, Painter, PanelLayout,
@@ -28,12 +29,17 @@ const PROGRESS_INTERVAL_MS: u32 = 33;
 const IDLE_INTERVAL_MS: u32 = 70;
 const HIDE_AFTER: std::time::Duration = std::time::Duration::from_millis(2400);
 
+const AUDIO_BASE: usize = 4096;
+const SUBTITLES_BASE: usize = AUDIO_BASE + MEDIA_ITEM_LIMIT;
+const CHAPTER_BASE: usize = SUBTITLES_BASE + MEDIA_ITEM_LIMIT;
+
 pub(in crate::app::controller) struct VideoView {
     surface: HWND,
     playback: Option<Playback>,
     active: bool,
     pub(super) closing: bool,
     status: PlaybackStatus,
+    media: Option<Arc<MediaDetails>>,
     playhead: Playhead,
     started: Option<Instant>,
     resize_pending: bool,
@@ -270,6 +276,7 @@ impl VideoView {
             active: false,
             closing: false,
             status: PlaybackStatus::new(Phase::Opening),
+            media: None,
             playhead: Playhead::new(Instant::now()),
             started: None,
             resize_pending: false,
@@ -357,6 +364,7 @@ impl AppState {
             return;
         };
         view.active = true;
+        view.media = None;
         view.started = started;
         view.resize_pending = true;
         view.notice = None;
@@ -385,6 +393,7 @@ impl AppState {
     pub(super) fn stop_video(&mut self) {
         if let Some(view) = self.video.as_deref_mut().filter(|view| view.active) {
             view.active = false;
+            view.media = None;
             self.active_path = None;
             if let Some(panel) = &mut view.panel {
                 panel.layer.reset();
@@ -503,12 +512,19 @@ impl AppState {
         else {
             return;
         };
-        let Some((generation, status)) = view.playback.as_ref().and_then(Playback::take) else {
+        let Some((generation, status, media)) = view.playback.as_ref().and_then(Playback::take)
+        else {
             return;
         };
         if generation != self.generation {
             return;
         }
+        let media_changed = match (&view.media, &media) {
+            (Some(previous), Some(current)) => !Arc::ptr_eq(previous, current),
+            (None, None) => false,
+            _ => true,
+        };
+        view.media = media;
         if status.video_ready
             && let Some(started) = view.started.take()
         {
@@ -527,7 +543,8 @@ impl AppState {
         view.status = status;
         if new_size || was_failed != view.failed() {
             self.layout_video();
-        } else if state_changed
+        } else if media_changed
+            || state_changed
             || view
                 .panel
                 .as_ref()
@@ -580,6 +597,7 @@ impl AppState {
             focus: panel.focus,
             drag: panel.drag,
             notice: view.notice.as_deref(),
+            media: view.media.as_deref(),
         }
     }
 
@@ -681,6 +699,10 @@ impl AppState {
         let pinned = view.controls_pinned();
         let now = Instant::now();
         let status = view.display_status(now);
+        let chapters = view
+            .media
+            .as_ref()
+            .map_or(&[][..], |media| media.chapters.as_slice());
         let Some(panel) = &mut view.panel else {
             return;
         };
@@ -751,9 +773,9 @@ impl AppState {
                 .then(|| layout.hit(local))
                 .flatten();
             panel.seek_hover = (status.seekable && panel.hover == Some(Hit::Seek))
-                .then(|| layout.fraction(local.x));
+                .then(|| layout.seek_fraction(local.x, status.duration_ms, chapters));
             if panel.drag.is_some() {
-                panel.drag = Some(layout.fraction(local.x));
+                panel.drag = Some(layout.seek_fraction(local.x, status.duration_ms, chapters));
             }
         }
         let mut redraw = (panel.wants_visible(pinned, now) && panel.layout.is_some())
@@ -823,6 +845,11 @@ impl AppState {
         let Some(panel) = &mut view.panel else { return };
         let Some(layout) = &panel.layout else { return };
         let hit = layout.hit(point);
+        let chapters = view
+            .media
+            .as_ref()
+            .map_or(&[][..], |media| media.chapters.as_slice());
+        let fraction = || layout.seek_fraction(point.x, view.status.duration_ms, chapters);
         let mut click = None;
         let mut seek = None;
         match message {
@@ -830,12 +857,12 @@ impl AppState {
                 panel.focus = None;
                 panel.pressed = hit;
                 if hit == Some(Hit::Seek) && view.status.seekable {
-                    panel.drag = Some(layout.fraction(point.x));
+                    panel.drag = Some(fraction());
                 }
             }
             WM_LBUTTONUP => {
                 if panel.drag.take().is_some() {
-                    seek = Some(layout.fraction(point.x));
+                    seek = Some(fraction());
                 } else if panel.pressed == hit
                     && let Some(Hit::Button(action)) = hit
                 {
@@ -854,8 +881,8 @@ impl AppState {
         }
         if let Some(fraction) = seek {
             let position = (view.status.duration_ms as f64 * f64::from(fraction)).round() as i64;
-            view.playhead.seek(position, Instant::now());
-            self.send_video_control(Control::Seek(position));
+            self.video_seek_to(position);
+            return;
         }
         if let Some(action) = click {
             self.video_action(action);
@@ -920,6 +947,34 @@ impl AppState {
                 self.send_video_control(Control::TogglePause);
                 self.reveal_video_panel();
             }
+        }
+    }
+
+    fn video_seek_to(&mut self, position: i64) {
+        if let Some(view) = self
+            .video
+            .as_deref_mut()
+            .filter(|view| view.active && view.status.seekable)
+        {
+            let position = position.clamp(0, view.status.duration_ms);
+            view.playhead.seek(position, Instant::now());
+            self.send_video_control(Control::Seek(position));
+            self.reveal_video_panel();
+        }
+    }
+
+    pub(super) fn video_seek_percent(&mut self, percent: u32) {
+        if let Some(view) = self.video() {
+            self.video_seek_to(view.status.duration_ms.saturating_mul(i64::from(percent)) / 100);
+        }
+    }
+
+    pub(super) fn video_next_frame(&mut self) {
+        if self.video().is_some_and(|view| {
+            view.status.video_ready && matches!(view.status.phase, Phase::Playing | Phase::Paused)
+        }) {
+            self.send_video_control(Control::NextFrame);
+            self.reveal_video_panel();
         }
     }
 
@@ -1057,11 +1112,13 @@ impl AppState {
     fn video_action(&mut self, action: Action) {
         match action {
             Action::Previous => self.navigate(-1),
+            Action::Back => self.video_seek_relative(-10_000),
+            Action::Forward => self.video_seek_relative(10_000),
             Action::Play => self.video_pause(),
             Action::Next => self.navigate(1),
             Action::Volume => self.reveal_video_volume(),
             Action::Loop => self.video_loop(),
-            Action::Rate | Action::More => self.video_menu(action),
+            Action::Rate | Action::Tracks | Action::More => self.video_menu(action),
             Action::Fullscreen => self.toggle_fullscreen(),
             Action::Open => self.open_dialog(),
             Action::Update => self.begin_update_install(),
@@ -1077,6 +1134,7 @@ impl AppState {
         const KGEN_MENU: usize = 3014;
         const VOLUME_DOWN: usize = 3015;
         const VOLUME_UP: usize = 3016;
+        const NEXT_FRAME: usize = 3017;
         let Some(view) = self.video() else { return };
         let Some(panel) = &view.panel else { return };
         let Some(mut anchor) = panel
@@ -1090,6 +1148,9 @@ impl AppState {
         let label = |es, en| if spanish { es } else { en };
         let Ok(menu) = PopupMenu::new() else { return };
         let preferences = view.preferences;
+        let generation = self.generation;
+        let status = view.display_status(Instant::now());
+        let media = view.media.clone();
         let speed_items = |menu: &PopupMenu| {
             for (index, rate) in RATES.into_iter().enumerate() {
                 menu.item(
@@ -1101,6 +1162,13 @@ impl AppState {
         };
         if action == Action::Rate {
             speed_items(&menu);
+        } else if action == Action::Tracks {
+            let Some(media) = &media else {
+                return;
+            };
+            if !menu.add_media_submenus(media, status, spanish) {
+                return;
+            }
         } else {
             menu.item(cmd::OPEN, label("Abrir archivo…", "Open file…"), false);
             menu.item(
@@ -1120,6 +1188,13 @@ impl AppState {
                 label("Avanzar 10 segundos", "Forward 10 seconds"),
                 false,
             );
+            if status.video_ready && matches!(status.phase, Phase::Playing | Phase::Paused) {
+                menu.item(
+                    NEXT_FRAME,
+                    label("Siguiente fotograma	E", "Next frame	E"),
+                    false,
+                );
+            }
             menu.item(
                 LOOP,
                 label("Repetir en bucle", "Loop video"),
@@ -1131,6 +1206,9 @@ impl AppState {
             if let Ok(speed) = PopupMenu::new() {
                 speed_items(&speed);
                 menu.submenu(speed, label("Velocidad", "Playback speed"));
+            }
+            if let Some(media) = &media {
+                menu.add_media_submenus(media, status, spanish);
             }
             menu.separator();
             menu.item(
@@ -1166,7 +1244,35 @@ impl AppState {
         {
             panel.menu_open = false;
         }
+        if generation != self.generation {
+            return;
+        }
         match command {
+            track if (AUDIO_BASE..SUBTITLES_BASE).contains(&track) => {
+                if let Some(track) = media
+                    .as_ref()
+                    .and_then(|media| media.audio.get(track - AUDIO_BASE))
+                {
+                    self.send_video_control(Control::AudioTrack(track.id));
+                }
+            }
+            track if (SUBTITLES_BASE..CHAPTER_BASE).contains(&track) => {
+                if let Some(track) = media
+                    .as_ref()
+                    .and_then(|media| media.subtitles.get(track - SUBTITLES_BASE))
+                {
+                    self.send_video_control(Control::SubtitleTrack(track.id));
+                }
+            }
+            chapter if (CHAPTER_BASE..CHAPTER_BASE + MEDIA_ITEM_LIMIT).contains(&chapter) => {
+                if let Some(chapter) = media
+                    .as_ref()
+                    .and_then(|media| media.chapters.get(chapter - CHAPTER_BASE))
+                {
+                    self.video_seek_to(chapter.start_ms);
+                }
+            }
+            NEXT_FRAME => self.video_next_frame(),
             rate if (RATE_BASE..RATE_BASE + RATES.len()).contains(&rate) => {
                 self.video_rate(RATES[rate - RATE_BASE])
             }
@@ -1206,6 +1312,84 @@ impl PopupMenu {
         unsafe {
             let _ = AppendMenuW(self.0, flags, command, PCWSTR(wide(text).as_ptr()));
         }
+    }
+
+    fn add_media_submenus(
+        &self,
+        media: &MediaDetails,
+        status: PlaybackStatus,
+        spanish: bool,
+    ) -> bool {
+        let track_menu = |tracks: &[Track], base: usize, active: i32, title, disabled| {
+            if !tracks.iter().any(|track| track.id >= 0) {
+                return false;
+            }
+            let Ok(menu) = Self::new() else { return false };
+            for (index, track) in tracks.iter().enumerate() {
+                let name = if track.id < 0 {
+                    disabled
+                } else {
+                    track.name.as_str()
+                };
+                let fallback = format!("{} {}", if spanish { "Pista" } else { "Track" }, index + 1);
+                let name = if name.is_empty() { &fallback } else { name };
+                menu.item(base + index, &name.replace('&', "&&"), track.id == active);
+            }
+            self.submenu(menu, title);
+            true
+        };
+        let audio = track_menu(
+            &media.audio,
+            AUDIO_BASE,
+            status.audio_track,
+            if spanish {
+                "Pistas de audio"
+            } else {
+                "Audio tracks"
+            },
+            if spanish {
+                "Sin audio"
+            } else {
+                "Disable audio"
+            },
+        );
+        let subtitles = track_menu(
+            &media.subtitles,
+            SUBTITLES_BASE,
+            status.subtitle_track,
+            if spanish { "Subtítulos" } else { "Subtitles" },
+            if spanish { "Desactivados" } else { "Off" },
+        );
+        let mut added = audio || subtitles;
+        if status.seekable
+            && !media.chapters.is_empty()
+            && let Ok(menu) = Self::new()
+        {
+            let active = media
+                .chapters
+                .partition_point(|chapter| chapter.start_ms <= status.elapsed_ms)
+                .checked_sub(1);
+            for (index, chapter) in media.chapters.iter().enumerate() {
+                let fallback = format!(
+                    "{} {}",
+                    if spanish { "Capítulo" } else { "Chapter" },
+                    index + 1
+                );
+                let name = if chapter.name.is_empty() {
+                    &fallback
+                } else {
+                    &chapter.name
+                };
+                menu.item(
+                    CHAPTER_BASE + index,
+                    &name.replace('&', "&&"),
+                    active == Some(index),
+                );
+            }
+            self.submenu(menu, if spanish { "Capítulos" } else { "Chapters" });
+            added = true;
+        }
+        added
     }
 
     fn separator(&self) {

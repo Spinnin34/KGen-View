@@ -21,7 +21,7 @@ use windows::{
 
 use crate::{
     i18n::Language,
-    platform::playback::{Phase, PlaybackStatus, Preferences},
+    platform::playback::{Chapter, MediaDetails, Phase, PlaybackStatus, Preferences},
 };
 
 use super::{layout::PxRect, theme::rgb};
@@ -36,7 +36,7 @@ const HOT_ACCENT: D2D1_COLOR_F = rgb(0xffbb89);
 const ACCENT_HALO: D2D1_COLOR_F = D2D1_COLOR_F { a: 0.19, ..ACCENT };
 const INK: D2D1_COLOR_F = rgb(0xf4f4f4);
 const MUTED: D2D1_COLOR_F = rgb(0xb4b4b8);
-const TRACK: D2D1_COLOR_F = rgb(0x4e4e54);
+const TRACK: D2D1_COLOR_F = rgb(0x494950);
 const HAIRLINE: D2D1_COLOR_F = rgb(0x3d3d42);
 const PANEL: D2D1_COLOR_F = D2D1_COLOR_F {
     a: 0.94,
@@ -47,11 +47,14 @@ const HOVER: D2D1_COLOR_F = rgb(0x36363d);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Previous,
+    Back,
     Play,
+    Forward,
     Next,
     Volume,
     Loop,
     Rate,
+    Tracks,
     Fullscreen,
     Open,
     Update,
@@ -69,6 +72,7 @@ pub struct PanelLayout {
     pub offset: POINT,
     pub size: SIZE,
     scale: f32,
+    body: PxRect,
     buttons: Vec<(Action, PxRect)>,
     seek: PxRect,
     time: PxRect,
@@ -83,36 +87,39 @@ impl PanelLayout {
             return None;
         }
         let scale = dpi_scale
-            .min(height as f32 / 78.0)
-            .min((width as f32 / 360.0).max(0.72))
-            .min(width as f32 / 132.0);
+            .min(height as f32 / 108.0)
+            .min((width as f32 / 380.0).max(0.74))
+            .min(width as f32 / 138.0);
         let inset = horizontal_inset(width, scale);
         let size = SIZE {
             cx: width - 2 * inset,
-            cy: (58.0 * scale).round() as i32,
+            cy: (88.0 * scale).round() as i32,
         };
         let width = size.cx as f32;
         let offset = POINT {
             x: client.left + inset,
             y: client.bottom - size.cy - (10.0 * scale).round() as i32,
         };
-        let pad = 8.0 * scale;
+        let body = PxRect::new(0.0, 22.0 * scale, width, size.cy as f32);
+        let pad = 10.0 * scale;
         let right = width - pad;
-        let seek = PxRect::new(
-            14.0 * scale,
-            38.0 * scale,
-            width - 14.0 * scale,
-            size.cy as f32,
-        );
-        let primary = [Action::Previous, Action::Play, Action::Next];
+        let seek = PxRect::new(16.0 * scale, body.top, width - 16.0 * scale, 47.0 * scale);
+        let mut primary = vec![Action::Previous, Action::Play, Action::Next];
+        if width >= 515.0 * scale {
+            primary.insert(1, Action::Back);
+            primary.insert(3, Action::Forward);
+        }
         let mut secondary = vec![Action::Fullscreen, Action::More];
-        if width >= 230.0 * scale {
+        if width >= 237.0 * scale {
             secondary.splice(0..0, [Action::Volume, Action::Loop]);
         }
-        if width >= 360.0 * scale {
-            secondary.insert(2, Action::Rate);
+        if width >= 370.0 * scale {
+            secondary.insert(1, Action::Rate);
         }
-        if width >= 452.0 * scale {
+        if width >= 460.0 * scale {
+            secondary.insert(1, Action::Tracks);
+        }
+        if width >= 735.0 * scale {
             secondary.insert(0, Action::Open);
         }
         if update {
@@ -123,28 +130,53 @@ impl PanelLayout {
         } else {
             0.0
         };
-        let button_width = (32.0 * scale)
+        let button_width = (33.0 * scale)
             .min((right - pad - rate_extra) / (primary.len() + secondary.len()) as f32);
-        let row = |x, width| PxRect::new(x, 5.0 * scale, x + width, 38.0 * scale);
-        let mut x = pad;
-        let mut buttons = Vec::new();
-        for action in primary {
-            buttons.push((action, row(x, button_width)));
-            x += button_width;
-        }
-        let left = x;
-        x = right - button_width * secondary.len() as f32 - rate_extra;
-        let free = (x - left).max(0.0);
-        let time_width = free.min(147.0 * scale);
-        let time = row(left + 11.0 * scale, (time_width - 11.0 * scale).max(0.0));
-        let caption = row(left + time_width, free - time_width);
+        let primary_width = button_width * primary.len() as f32;
+        let secondary_left = right - button_width * secondary.len() as f32 - rate_extra;
+        let center = (width - primary_width) * 0.5;
+        let centered =
+            center >= pad + 132.0 * scale && center + primary_width + 6.0 * scale <= secondary_left;
+        let primary_left = if centered { center } else { pad };
+        let primary_right = primary_left + primary_width;
+
+        let row =
+            |left: f32, width: f32| PxRect::new(left, seek.bottom, left + width, 84.0 * scale);
+        let time_left = if centered {
+            16.0 * scale
+        } else {
+            primary_right + 9.0 * scale
+        };
+        let time_right = if centered {
+            primary_left - 9.0 * scale
+        } else {
+            secondary_left - 4.0 * scale
+        };
+        let time = row(
+            time_left,
+            (time_right - time_left).clamp(0.0, 143.0 * scale),
+        );
+        let hint_left = time
+            .right
+            .max(if centered { primary_right } else { time.left });
+        let caption = row(hint_left, (secondary_left - hint_left).max(0.0));
+        let mut buttons: Vec<_> = primary
+            .into_iter()
+            .enumerate()
+            .map(|(index, action)| {
+                (
+                    action,
+                    row(primary_left + button_width * index as f32, button_width),
+                )
+            })
+            .collect();
+        let mut x = secondary_left;
         for action in secondary {
-            let width = button_width
-                + if action == Action::Rate {
-                    rate_extra
-                } else {
-                    0.0
-                };
+            let width = if action == Action::Rate {
+                button_width + rate_extra
+            } else {
+                button_width
+            };
             buttons.push((action, row(x, width)));
             x += width;
         }
@@ -152,6 +184,7 @@ impl PanelLayout {
             offset,
             size,
             scale,
+            body,
             buttons,
             seek,
             time,
@@ -160,7 +193,7 @@ impl PanelLayout {
     }
 
     pub fn hit(&self, point: POINT) -> Option<Hit> {
-        if point.y as f32 >= self.seek.top && self.contains(point) {
+        if (self.seek.top..self.seek.bottom).contains(&(point.y as f32)) && self.contains(point) {
             return Some(Hit::Seek);
         }
         self.buttons
@@ -171,6 +204,39 @@ impl PanelLayout {
     pub fn fraction(&self, x: i32) -> f32 {
         let rect = self.seek;
         ((x as f32 - rect.left) / (rect.right - rect.left).max(1.0)).clamp(0.0, 1.0)
+    }
+
+    pub fn seek_fraction(&self, x: i32, duration_ms: i64, chapters: &[Chapter]) -> f32 {
+        let fraction = self.fraction(x);
+        self.chapter_near(fraction, duration_ms, chapters)
+            .map_or(fraction, |chapter| {
+                time_fraction(chapter.start_ms, duration_ms)
+            })
+    }
+
+    fn chapter_near<'a>(
+        &self,
+        fraction: f32,
+        duration_ms: i64,
+        chapters: &'a [Chapter],
+    ) -> Option<&'a Chapter> {
+        if duration_ms <= 0 {
+            return None;
+        }
+        let target = (duration_ms as f64 * f64::from(fraction)).round() as i64;
+        let next = chapters.partition_point(|chapter| chapter.start_ms < target);
+        let tolerance = 5.5 * self.scale / (self.seek.right - self.seek.left);
+        [
+            next.checked_sub(1).and_then(|index| chapters.get(index)),
+            chapters.get(next),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|chapter| chapter.start_ms < duration_ms)
+        .min_by_key(|chapter| chapter.start_ms.abs_diff(target))
+        .filter(|chapter| {
+            (time_fraction(chapter.start_ms, duration_ms) - fraction).abs() <= tolerance
+        })
     }
 
     pub fn timeline_key(&self, status: PlaybackStatus, drag: Option<f32>) -> (i32, i64) {
@@ -187,7 +253,11 @@ impl PanelLayout {
     }
 
     pub fn contains(&self, point: POINT) -> bool {
-        (0..self.size.cx).contains(&point.x) && (0..self.size.cy).contains(&point.y)
+        self.body.contains(point)
+    }
+
+    pub fn body_top(&self) -> i32 {
+        self.offset.y + self.body.top.round() as i32
     }
 
     pub fn anchor(&self, action: Action) -> Option<POINT> {
@@ -239,12 +309,22 @@ pub struct Model<'a> {
     pub focus: Option<Action>,
     pub drag: Option<f32>,
     pub notice: Option<&'a str>,
+    pub media: Option<&'a MediaDetails>,
 }
 
 impl Model<'_> {
     pub fn enabled(&self, action: Action) -> bool {
         match action {
             Action::Previous | Action::Next => self.can_navigate,
+            Action::Back | Action::Forward => self.status.seekable,
+            Action::Tracks => self.media.is_some_and(|media| {
+                (self.status.seekable && !media.chapters.is_empty())
+                    || media
+                        .audio
+                        .iter()
+                        .chain(&media.subtitles)
+                        .any(|track| track.id >= 0)
+            }),
             Action::Play => !matches!(self.status.phase, Phase::Opening),
             Action::Update => !self.update_busy,
             _ => true,
@@ -255,6 +335,8 @@ impl Model<'_> {
         let labels = match action {
             Action::Previous => ("Vídeo anterior", "Previous video"),
             Action::Next => ("Vídeo siguiente", "Next video"),
+            Action::Back => ("Retroceder 10 s · J", "Back 10 s · J"),
+            Action::Forward => ("Avanzar 10 s · L", "Forward 10 s · L"),
             Action::Play => match self.status.phase {
                 Phase::Playing => ("Pausar", "Pause"),
                 Phase::Ended => ("Repetir", "Replay"),
@@ -265,6 +347,7 @@ impl Model<'_> {
             Action::Loop if self.preferences.looping => ("Desactivar bucle", "Turn off loop"),
             Action::Loop => ("Repetir en bucle", "Loop video"),
             Action::Rate => ("Velocidad", "Playback speed"),
+            Action::Tracks => ("Pistas y capítulos", "Tracks and chapters"),
             Action::Fullscreen if self.fullscreen => {
                 ("Salir de pantalla completa", "Exit full screen")
             }
@@ -286,6 +369,8 @@ impl Model<'_> {
     fn glyph(&self, action: Action) -> u16 {
         match action {
             Action::Previous => 0xe892,
+            Action::Back | Action::Forward => 0,
+            Action::Tracks => 0xed1f,
             Action::Play if self.status.phase == Phase::Playing => 0xe769,
             Action::Play => 0xe768,
             Action::Next => 0xe893,
@@ -335,6 +420,8 @@ pub struct Painter {
     scale: f32,
     icons: IDWriteTextFormat,
     time: IDWriteTextFormat,
+    time_centered: IDWriteTextFormat,
+    caption: IDWriteTextFormat,
     label: IDWriteTextFormat,
     brush: ID2D1SolidColorBrush,
 }
@@ -379,6 +466,8 @@ impl Painter {
                 scale,
                 icons: format(w!("Segoe MDL2 Assets"), 15.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 time: format(w!("Consolas"), 11.5, DWRITE_TEXT_ALIGNMENT_LEADING)?,
+                time_centered: format(w!("Consolas"), 11.5, DWRITE_TEXT_ALIGNMENT_CENTER)?,
+                caption: format(w!("Segoe UI"), 11.0, DWRITE_TEXT_ALIGNMENT_LEADING)?,
                 label: format(w!("Segoe UI"), 11.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 brush: target.CreateSolidColorBrush(&rgb(0xf1f1f6), None)?,
             })
@@ -406,7 +495,7 @@ impl Painter {
         const DISABLED: D2D1_COLOR_F = rgb(0x77777b);
         let scale = layout.scale;
         let brush = &self.brush;
-        surface(target, brush, layout.size, scale);
+        surface(target, brush, layout.body, scale);
         let draw_chars = |chars: &[u16], area: PxRect, format: &IDWriteTextFormat, color| unsafe {
             brush.SetColor(color);
             target.DrawText(
@@ -426,34 +515,24 @@ impl Painter {
                 color,
             )
         };
+        let chapters = model
+            .media
+            .map_or(&[][..], |media| media.chapters.as_slice());
         if let Some(message) = model.message() {
             label(message, layout.seek, &self.label, &INK);
         } else {
             let clock = layout.time;
             let clock_width = clock.right - clock.left;
-            let preview = model.drag.or(model.seek_hover);
+            let preview = model
+                .drag
+                .or(model.seek_hover)
+                .filter(|_| model.status.seekable);
             if clock_width >= 30.0 * scale {
-                let elapsed = time_label(timeline_elapsed(model.status, preview));
+                let elapsed = time_label(timeline_elapsed(model.status, model.drag));
                 let duration = time_label(model.status.duration_ms.max(0));
                 let elapsed_width = elapsed.len() as f32 * 6.4 * scale;
                 let duration_left = clock.left + elapsed_width + 10.0 * scale;
-                let center_y = (clock.top + clock.bottom) * 0.5;
-                let split = PxRect::new(
-                    clock.left - 6.0 * scale,
-                    center_y - 7.0 * scale,
-                    clock.left - 5.0 * scale,
-                    center_y + 7.0 * scale,
-                );
-                unsafe {
-                    brush.SetColor(&HAIRLINE);
-                    target.FillRectangle(&split.as_d2d(), brush);
-                }
-                label(
-                    &elapsed,
-                    clock,
-                    &self.time,
-                    &if preview.is_some() { HOT_ACCENT } else { INK },
-                );
+                label(&elapsed, clock, &self.time, &INK);
                 if model.status.duration_ms > 0
                     && clock.right - duration_left >= (duration.len() + 2) as f32 * 6.4 * scale
                 {
@@ -481,16 +560,13 @@ impl Painter {
             let seek = layout.seek;
             let y = (seek.top + seek.bottom) * 0.5;
             let x = layout.playhead_x(model.status, model.drag);
-            let active = model.status.seekable && preview.is_some();
-            let half = if active { 1.75 } else { 1.25 } * scale;
+            let preview_x = preview.map(|fraction| seek.left + (seek.right - seek.left) * fraction);
+            let active = preview.is_some();
+            let half = if active { 2.4 } else { 1.85 } * scale;
             let rail = PxRect::new(seek.left, y - half, seek.right, y + half);
             unsafe {
                 brush.SetColor(&TRACK);
                 target.FillRoundedRectangle(&rail.as_rounded(half), brush);
-                let cursor = model
-                    .seek_hover
-                    .filter(|_| model.drag.is_none())
-                    .map(|fraction| rail.left + (rail.right - rail.left) * fraction);
                 if x > rail.left {
                     let played = PxRect { right: x, ..rail };
                     brush.SetColor(&ACCENT);
@@ -499,28 +575,37 @@ impl Painter {
                         brush,
                     );
                 }
-                if let Some(cursor) = cursor
-                    && (cursor - x).abs() > 7.0 * scale
+                brush.SetColor(&rgb(0xd1c7c2));
+                let mut last_x = seek.left;
+                for chapter in chapters.iter().filter(|chapter| {
+                    chapter.start_ms > 0 && chapter.start_ms < model.status.duration_ms
+                }) {
+                    let marker = seek.left
+                        + (seek.right - seek.left)
+                            * time_fraction(chapter.start_ms, model.status.duration_ms);
+                    if marker - last_x >= 3.5 * scale {
+                        let tick = PxRect::new(
+                            marker - 0.5 * scale,
+                            y - 4.8 * scale,
+                            marker + 0.5 * scale,
+                            y + 4.8 * scale,
+                        );
+                        target.FillRectangle(&tick.as_d2d(), brush);
+                        last_x = marker;
+                    }
+                }
+                if let Some(cursor) = preview_x
+                    && model.drag.is_none()
+                    && (cursor - x).abs() > 6.0 * scale
                 {
-                    let span = PxRect {
-                        left: cursor.min(x),
-                        right: cursor.max(x),
-                        ..rail
-                    };
-                    brush.SetColor(&if cursor > x {
-                        rgb(0x855b44)
-                    } else {
-                        rgb(0xca6e3c)
-                    });
-                    target.FillRoundedRectangle(&span.as_rounded(half), brush);
-                    let marker = PxRect::new(
-                        cursor - 0.65 * scale,
-                        y - 4.0 * scale,
-                        cursor + 0.65 * scale,
-                        y + 4.0 * scale,
-                    );
                     brush.SetColor(&HOT_ACCENT);
-                    target.FillRoundedRectangle(&marker.as_rounded(0.65 * scale), brush);
+                    let marker = PxRect::new(
+                        cursor - 0.7 * scale,
+                        y - 5.8 * scale,
+                        cursor + 0.7 * scale,
+                        y + 5.8 * scale,
+                    );
+                    target.FillRoundedRectangle(&marker.as_rounded(0.7 * scale), brush);
                 }
                 if model.status.seekable {
                     draw_thumb(
@@ -532,6 +617,61 @@ impl Painter {
                         active,
                         model.drag.is_some(),
                         false,
+                    );
+                }
+            }
+            if let Some((fraction, cursor)) = preview.zip(preview_x) {
+                let milliseconds = timeline_elapsed(model.status, Some(fraction));
+                let timecode = format!("{}.{:03}", time_label(milliseconds), milliseconds % 1000);
+                let chapter = layout
+                    .chapter_near(fraction, model.status.duration_ms, chapters)
+                    .map(|chapter| chapter.name.as_str())
+                    .filter(|name| !name.is_empty());
+                let gap = 8.0 * scale;
+                let time_width = timecode.len() as f32 * 6.4 * scale + 2.0 * gap;
+                let max_extra =
+                    (layout.body.right - time_width - 2.0 * gap).clamp(0.0, 176.0 * scale);
+                let chapter = chapter.filter(|_| max_extra >= 50.0 * scale);
+                let extra = chapter.map_or(0.0, |name| {
+                    ((name.chars().count() as f32 * 5.8 + 18.0) * scale).min(max_extra)
+                });
+                let width = time_width + extra;
+                let left = (cursor - width * 0.5).clamp(0.0, (layout.body.right - width).max(0.0));
+                let badge =
+                    PxRect::new(left + 0.5, 0.5, left + width - 0.5, seek.top + 1.0 * scale);
+                unsafe {
+                    let rounded = badge.as_rounded(5.0 * scale);
+                    brush.SetColor(&rgb(0x252429));
+                    target.FillRoundedRectangle(&rounded, brush);
+                    brush.SetColor(&HAIRLINE);
+                    target.DrawRoundedRectangle(&rounded, brush, 1.0, None);
+                }
+                label(
+                    &timecode,
+                    PxRect {
+                        left: left + gap,
+                        right: left + time_width,
+                        ..badge
+                    },
+                    &self.time,
+                    &INK,
+                );
+                if let Some(chapter) = chapter {
+                    let max_chars = ((extra - gap) / (6.1 * scale)).floor() as usize;
+                    let mut text: String = chapter.chars().take(max_chars).collect();
+                    if text.len() < chapter.len() {
+                        text.pop();
+                        text.push('…');
+                    }
+                    label(
+                        &text,
+                        PxRect {
+                            left: left + time_width,
+                            right: badge.right - gap,
+                            ..badge
+                        },
+                        &self.caption,
+                        &MUTED,
                     );
                 }
             }
@@ -548,6 +688,7 @@ impl Painter {
             } else if *button == Action::Play
                 || (*button == Action::Loop && model.preferences.looping)
                 || (*button == Action::Volume && model.volume_open)
+                || (*button == Action::Tracks && model.status.subtitle_track >= 0)
                 || *button == Action::Update
             {
                 ACCENT
@@ -574,15 +715,16 @@ impl Painter {
                     target.DrawRoundedRectangle(&button_shape, brush, 1.0, None);
                 }
             }
-            if *button == Action::Rate {
-                label(
+            match button {
+                Action::Rate => label(
                     &rate_label(model.preferences.rate, model.language),
                     rect,
                     &self.label,
                     &color,
-                );
-            } else {
-                draw_chars(&[model.glyph(*button)], rect, &self.icons, &color);
+                ),
+                Action::Back => label("−10", rect, &self.time_centered, &color),
+                Action::Forward => label("+10", rect, &self.time_centered, &color),
+                _ => draw_chars(&[model.glyph(*button)], rect, &self.icons, &color),
             }
         }
     }
@@ -594,8 +736,8 @@ fn horizontal_inset(width: i32, scale: f32) -> i32 {
         .round() as i32
 }
 
-fn surface(target: &ID2D1DCRenderTarget, brush: &ID2D1SolidColorBrush, size: SIZE, scale: f32) {
-    let bounds = PxRect::new(0.5, 0.5, size.cx as f32 - 0.5, size.cy as f32 - 0.5);
+fn surface(target: &ID2D1DCRenderTarget, brush: &ID2D1SolidColorBrush, bounds: PxRect, scale: f32) {
+    let bounds = bounds.inset(0.5);
     let rounded = bounds.as_rounded(7.0 * scale);
     unsafe {
         brush.SetColor(&PANEL);
@@ -664,8 +806,11 @@ fn timeline_elapsed(status: PlaybackStatus, drag: Option<f32>) -> i64 {
 }
 
 fn progress(status: PlaybackStatus) -> Option<f32> {
-    (status.duration_ms > 0)
-        .then(|| (status.elapsed_ms as f32 / status.duration_ms as f32).clamp(0.0, 1.0))
+    (status.duration_ms > 0).then(|| time_fraction(status.elapsed_ms, status.duration_ms))
+}
+
+fn time_fraction(elapsed_ms: i64, duration_ms: i64) -> f32 {
+    (elapsed_ms as f64 / duration_ms as f64).clamp(0.0, 1.0) as f32
 }
 
 fn time_label(ms: i64) -> String {

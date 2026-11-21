@@ -1,6 +1,6 @@
 //! LibVLC is loaded on the playback thread when the first video opens.
 use std::{
-    ffi::{CString, c_char, c_int, c_void},
+    ffi::{CStr, CString, c_char, c_int, c_void},
     os::windows::ffi::OsStrExt,
     sync::{
         Arc,
@@ -28,6 +28,7 @@ use crate::mailbox::Mailbox;
 pub const WM_PLAYBACK: u32 = WM_APP + 11;
 pub const WM_PLAYBACK_CLOSED: u32 = WM_APP + 12;
 pub const MAX_VOLUME: i32 = 200;
+pub const MEDIA_ITEM_LIMIT: usize = 256;
 const REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const OPEN_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 const OPEN_REFRESH_LIMIT: Duration = Duration::from_secs(1);
@@ -50,6 +51,8 @@ pub struct PlaybackStatus {
     pub seekable: bool,
     pub video_ready: bool,
     pub dimensions: Option<(u32, u32)>,
+    pub audio_track: i32,
+    pub subtitle_track: i32,
 }
 
 impl PlaybackStatus {
@@ -61,14 +64,40 @@ impl PlaybackStatus {
             seekable: false,
             video_ready: false,
             dimensions: None,
+            audio_track: -1,
+            subtitle_track: -1,
         }
     }
 }
+
+#[derive(Debug)]
+pub struct Track {
+    pub id: i32,
+    pub name: String,
+}
+
+#[derive(Debug)]
+pub struct Chapter {
+    pub start_ms: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Default)]
+pub struct MediaDetails {
+    pub audio: Vec<Track>,
+    pub subtitles: Vec<Track>,
+    pub chapters: Vec<Chapter>,
+}
+
+type PlaybackUpdate = (u64, PlaybackStatus, Option<Arc<MediaDetails>>);
 
 pub enum Control {
     TogglePause,
     Seek(i64),
     SeekBy(i64),
+    NextFrame,
+    AudioTrack(i32),
+    SubtitleTrack(i32),
     Audio { volume: i32, muted: bool },
     Loop(bool),
     Rate(f32),
@@ -107,7 +136,7 @@ enum Request {
 pub struct Playback {
     commands: Sender<Request>,
     latest_generation: Arc<AtomicU64>,
-    status: Arc<Mailbox<(u64, PlaybackStatus)>>,
+    status: Arc<Mailbox<PlaybackUpdate>>,
 }
 
 impl Playback {
@@ -128,6 +157,7 @@ impl Playback {
                 let mut generation = 0;
                 let mut previous = None;
                 let mut audio_pending = false;
+                let mut details = None;
                 let mut opening_until = None;
                 loop {
                     let request = if player.is_some() {
@@ -155,6 +185,7 @@ impl Playback {
                         }) if requested == latest.load(Ordering::Acquire) => {
                             generation = requested;
                             previous = None;
+                            details = None;
                             opening_until = None;
                             match Player::open(player.take(), surface, &path, preferences) {
                                 Ok(opened) => {
@@ -178,12 +209,21 @@ impl Playback {
                         {
                             player = None;
                             previous = None;
+                            details = None;
                         }
                         Some(Request::Close) => break,
                         _ => {}
                     }
+                    let mut details_changed = false;
                     if let Some(current) = &mut player {
                         let mut status = current.status();
+                        if details.is_none()
+                            && status.video_ready
+                            && matches!(status.phase, Phase::Playing | Phase::Paused)
+                        {
+                            details = Some(Arc::new(current.media_details()));
+                            details_changed = true;
+                        }
                         if status.dimensions.is_some()
                             || matches!(status.phase, Phase::Ended | Phase::Failed)
                         {
@@ -211,9 +251,9 @@ impl Playback {
                         }
                     }
                     if let Some(status) = snapshot
-                        && previous != Some(status)
+                        && (details_changed || previous != Some(status))
                         && generation == latest.load(Ordering::Acquire)
-                        && inbox.publish((generation, status))
+                        && inbox.publish((generation, status, details.clone()))
                     {
                         previous = Some(status);
                         unsafe {
@@ -253,7 +293,7 @@ impl Playback {
         let _ = self.commands.send(Request::Stop(generation));
     }
 
-    pub fn take(&self) -> Option<(u64, PlaybackStatus)> {
+    pub fn take(&self) -> Option<PlaybackUpdate> {
         self.status.take()
     }
 
@@ -332,6 +372,7 @@ libvlc_api! {
     libvlc_media_player_play: fn(Handle) -> c_int,
     libvlc_media_player_stop: fn(Handle),
     libvlc_media_player_pause: fn(Handle),
+    libvlc_media_player_next_frame: fn(Handle),
     libvlc_media_player_get_state: fn(Handle) -> c_int,
     libvlc_media_player_get_time: fn(Handle) -> i64,
     libvlc_media_player_get_length: fn(Handle) -> i64,
@@ -342,6 +383,42 @@ libvlc_api! {
     libvlc_video_get_track: fn(Handle) -> c_int,
     libvlc_audio_set_volume: fn(Handle, c_int) -> c_int,
     libvlc_audio_set_mute: fn(Handle, c_int),
+    libvlc_audio_get_track: fn(Handle) -> c_int,
+    libvlc_audio_set_track: fn(Handle, c_int) -> c_int,
+    libvlc_audio_get_track_description: fn(Handle) -> *mut TrackDescription,
+    libvlc_video_get_spu: fn(Handle) -> c_int,
+    libvlc_video_set_spu: fn(Handle, c_int) -> c_int,
+    libvlc_video_get_spu_description: fn(Handle) -> *mut TrackDescription,
+    libvlc_track_description_list_release: fn(*mut TrackDescription),
+    libvlc_media_player_get_full_chapter_descriptions: fn(Handle, c_int, *mut *mut *mut ChapterDescription) -> c_int,
+    libvlc_chapter_descriptions_release: fn(*mut *mut ChapterDescription, u32),
+}
+
+#[repr(C)]
+struct TrackDescription {
+    id: c_int,
+    name: *const c_char,
+    next: *const TrackDescription,
+}
+
+#[repr(C)]
+struct ChapterDescription {
+    start_ms: i64,
+    _duration_ms: i64,
+    name: *const c_char,
+}
+
+unsafe fn media_name(name: *const c_char) -> String {
+    if name.is_null() {
+        return String::new();
+    }
+    let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+    String::from_utf8_lossy(&bytes[..bytes.len().min(640)])
+        .trim()
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(160)
+        .collect()
 }
 
 // Prefixes of the C structs in the LibVLC 3 media API. The details union
@@ -515,6 +592,8 @@ impl Player {
                 seekable: (api.libvlc_media_player_is_seekable)(player) != 0 && self.end_ms > 0,
                 video_ready,
                 dimensions: self.dimensions,
+                audio_track: (api.libvlc_audio_get_track)(player),
+                subtitle_track: (api.libvlc_video_get_spu)(player),
             }
         }
     }
@@ -547,6 +626,58 @@ impl Player {
                 .and_then(VideoTrack::display_dimensions);
             (api.libvlc_media_tracks_release)(tracks, count);
             dimensions
+        }
+    }
+
+    fn media_details(&self) -> MediaDetails {
+        let api = &self.api;
+        let player = self.player;
+        let tracks = |head: *mut TrackDescription| {
+            let mut tracks = Vec::new();
+            let mut link = head.cast_const();
+            unsafe {
+                while let Some(track) = link.as_ref().filter(|_| tracks.len() < MEDIA_ITEM_LIMIT) {
+                    tracks.push(Track {
+                        id: track.id,
+                        name: media_name(track.name),
+                    });
+                    link = track.next;
+                }
+                if !head.is_null() {
+                    (api.libvlc_track_description_list_release)(head);
+                }
+            }
+            tracks
+        };
+        let mut chapters = Vec::new();
+        unsafe {
+            let mut descriptions = std::ptr::null_mut();
+            let count = (api.libvlc_media_player_get_full_chapter_descriptions)(
+                player,
+                -1,
+                &mut descriptions,
+            );
+            if count > 0 && !descriptions.is_null() {
+                let limit = (count as usize).min(MEDIA_ITEM_LIMIT);
+                for &description in std::slice::from_raw_parts(descriptions, limit) {
+                    if let Some(chapter) =
+                        description.as_ref().filter(|chapter| chapter.start_ms >= 0)
+                    {
+                        chapters.push(Chapter {
+                            start_ms: chapter.start_ms,
+                            name: media_name(chapter.name),
+                        });
+                    }
+                }
+                (api.libvlc_chapter_descriptions_release)(descriptions, count as u32);
+            }
+            chapters.sort_by_key(|chapter| chapter.start_ms);
+            chapters.dedup_by_key(|chapter| chapter.start_ms);
+            MediaDetails {
+                audio: tracks((api.libvlc_audio_get_track_description)(player)),
+                subtitles: tracks((api.libvlc_video_get_spu_description)(player)),
+                chapters,
+            }
         }
     }
 
@@ -586,6 +717,15 @@ impl Player {
                         };
                         (api.libvlc_media_player_set_time)(player, target.clamp(0, self.end_ms));
                     }
+                }
+                Control::NextFrame => {
+                    (api.libvlc_media_player_next_frame)(player);
+                }
+                Control::AudioTrack(id) => {
+                    return (api.libvlc_audio_set_track)(player, id) == 0 && id >= 0;
+                }
+                Control::SubtitleTrack(id) => {
+                    let _ = (api.libvlc_video_set_spu)(player, id);
                 }
                 Control::Audio { volume, muted } => {
                     self.preferences.volume = volume.clamp(0, MAX_VOLUME);

@@ -75,7 +75,7 @@ WebP y HEIF/HEIC dependen de los codecs instalados en Windows. JPEG XL se decodi
 
 El instalador y el ZIP portátil incluyen LibVLC 3 para reproducir archivos locales como MP4, MKV, WebM, MOV, AVI, WMV, MPEG, M2TS, FLV, OGV y 3GP. La compatibilidad depende del códec de las pistas y del contenedor. LibVLC usa decodificación por hardware cuando el códec, la GPU y el controlador son compatibles, y puede decodificar por software en los demás casos. La carpeta `vlc` incluye los avisos de licencia y enlaces al código fuente de VideoLAN.
 
-Acerca el ratón al borde inferior para ver los controles flotantes. Al alejarlo o dejarlo quieto queda una línea naranja con la posición del vídeo. Pasa el ratón por la línea de tiempo para ver el segundo exacto y arrastra para ir a ese punto. El lateral derecho muestra el volumen vertical de 0 a 200 %, con una marca en el 100 %. Usa la rueda en ese lateral para ajustar el volumen. El menú **Más opciones** incluye avances de diez segundos y velocidades de 0,5× a 2×. El ajuste automático adapta la ventana al tamaño y orientación del vídeo dentro del monitor. Las flechas, la rueda sobre el vídeo, Inicio y Fin recorren el tipo de archivo abierto.
+Acerca el ratón al borde inferior para ver los controles flotantes. Al alejarlo o dejarlo quieto queda una línea naranja con la posición del vídeo. La línea de tiempo muestra la posición con milisegundos junto al puntero. Haz clic o arrastra para buscar, o selecciona una marca para saltar a un capítulo. El lateral derecho muestra el volumen vertical de 0 a 200 %, con una marca en el 100 %. Usa la rueda en ese lateral para ajustar el volumen. El menú **Pistas y capítulos** reúne el audio, los subtítulos y los capítulos que incluye el archivo. En una ventana estrecha, estas opciones aparecen en **Más opciones**, junto con el avance de un fotograma y el ajuste de velocidad. El ajuste automático adapta la ventana al tamaño y orientación del vídeo dentro del monitor. Las flechas, la rueda sobre el vídeo, Inicio y Fin recorren el tipo de archivo abierto.
 
 ### Exportación
 
@@ -104,6 +104,8 @@ Activa **Opciones -> Activar captura rectangular** para habilitar la captura. Ca
 | Pausar o reanudar vídeo o animación | `Espacio` |
 | Retroceder o avanzar 5 segundos en un vídeo | `RePág` / `AvPág` |
 | Retroceder o avanzar 10 segundos en un vídeo | `J` / `L` |
+| Avanzar un fotograma en vídeo | `E` |
+| Saltar al inicio o al 10–90 % del vídeo | `0`–`9` |
 | Subir o bajar el volumen del vídeo | `↑` / `↓` |
 | Silenciar o recuperar el sonido del vídeo | `M` |
 | Activar o desactivar el bucle del vídeo | `B` |
