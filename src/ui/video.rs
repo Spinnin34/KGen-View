@@ -30,7 +30,10 @@ mod edge;
 mod layer;
 mod menu;
 pub use edge::{EdgeLayout, EdgeZone, ProgressLine, VolumeHit, VolumeLayout, VolumePainter};
-pub use layer::{Layer, LayerKind, WM_PANEL_INPUT, WM_VIDEO_MENU_INPUT, WM_VOLUME_INPUT};
+pub use layer::{
+    Layer, LayerKind, WM_PANEL_INPUT, WM_VIDEO_MENU_INPUT, WM_VOLUME_INPUT,
+    set_video_cursor_hidden, video_cursor_hidden,
+};
 pub use menu::{MenuCommand, MenuHit, MenuPage, MenuRow, VideoMenu};
 
 const ACCENT: D2D1_COLOR_F = rgb(0xff8d42);

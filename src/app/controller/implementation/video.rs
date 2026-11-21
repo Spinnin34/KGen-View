@@ -13,8 +13,9 @@ use crate::{
 use windows::Win32::UI::{
     HiDpi::GetDpiForWindow,
     WindowsAndMessaging::{
-        GA_ROOTOWNER, GetAncestor, GetCursorPos, IsWindowVisible, SW_HIDE, WM_CAPTURECHANGED,
-        WS_CHILD, WS_DISABLED, WS_EX_NOPARENTNOTIFY, WindowFromPoint,
+        GA_ROOTOWNER, GetAncestor, GetCursorPos, IsWindowVisible, SW_HIDE, SetCursor,
+        WM_CAPTURECHANGED, WM_SETCURSOR, WS_CHILD, WS_DISABLED, WS_EX_NOPARENTNOTIFY,
+        WindowFromPoint,
     },
 };
 
@@ -22,12 +23,51 @@ mod clock;
 mod menu;
 use clock::Playhead;
 
-const SS_BLACKRECT: WINDOW_STYLE = WINDOW_STYLE(4);
+const VIDEO_SURFACE_CLASS: PCWSTR = windows::core::w!("KGenView.VideoSurface");
 pub(super) const TIMER_VIDEO_PANEL: usize = 9;
 const ACTIVE_INTERVAL_MS: u32 = 15;
 const PROGRESS_INTERVAL_MS: u32 = 33;
 const IDLE_INTERVAL_MS: u32 = 70;
 const HIDE_AFTER: std::time::Duration = std::time::Duration::from_millis(2400);
+
+fn register_video_surface_class() -> Result<(), WinError> {
+    use windows::Win32::{
+        Foundation::ERROR_CLASS_ALREADY_EXISTS,
+        Graphics::Gdi::{BLACK_BRUSH, GetStockObject, HBRUSH},
+        UI::WindowsAndMessaging::{CS_HREDRAW, CS_VREDRAW, IDC_ARROW, LoadCursorW},
+    };
+
+    let class = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(video_surface_window_proc),
+        hInstance: unsafe { HINSTANCE(GetModuleHandleW(None)?.0) },
+        hCursor: unsafe { LoadCursorW(None, IDC_ARROW)? },
+        hbrBackground: unsafe { HBRUSH(GetStockObject(BLACK_BRUSH).0) },
+        lpszClassName: VIDEO_SURFACE_CLASS,
+        ..Default::default()
+    };
+    if unsafe { RegisterClassExW(&class) } == 0 {
+        let error = WinError::from_thread();
+        if error.code() != ERROR_CLASS_ALREADY_EXISTS.to_hresult() {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+unsafe extern "system" fn video_surface_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_SETCURSOR && crate::ui::video::video_cursor_hidden() {
+        unsafe { SetCursor(None) };
+        return LRESULT(1);
+    }
+    unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+}
 
 pub(in crate::app::controller) struct VideoView {
     surface: HWND,
@@ -63,6 +103,7 @@ struct VideoPanel {
     menu: Option<VideoMenu>,
     timer_interval: u32,
     timeline_key: Option<(i32, i64)>,
+    cursor_activity: Instant,
 }
 
 impl VideoPanel {
@@ -85,6 +126,7 @@ impl VideoPanel {
             menu: None,
             timer_interval: 0,
             timeline_key: None,
+            cursor_activity: Instant::now(),
         }
     }
 
@@ -116,6 +158,7 @@ impl VideoPanel {
         self.drag = None;
         self.zone = EdgeZone::None;
         self.cursor = None;
+        self.cursor_activity = Instant::now();
         self.reveal = Reveal::default();
         if let Some(menu) = &mut self.menu {
             menu.close();
@@ -238,12 +281,13 @@ impl SidePanel {
 
 impl VideoView {
     fn new(hwnd: HWND, factory: &ID2D1Factory) -> Result<Self, WinError> {
+        register_video_surface_class()?;
         let surface = unsafe {
             CreateWindowExW(
                 WS_EX_NOPARENTNOTIFY,
-                w!("STATIC"),
+                VIDEO_SURFACE_CLASS,
                 w!(""),
-                WS_CHILD | WS_CLIPCHILDREN | WS_DISABLED | SS_BLACKRECT,
+                WS_CHILD | WS_CLIPCHILDREN | WS_DISABLED,
                 0,
                 0,
                 0,
@@ -349,6 +393,20 @@ impl AppState {
         self.update_title();
 
         let started = self.load_started.take();
+        let saved_preferences = Preferences {
+            volume: self.settings.video_volume,
+            muted: self.settings.video_muted,
+            looping: self.settings.video_looping,
+            rate: match self.settings.video_rate_percent {
+                50 => 0.5,
+                75 => 0.75,
+                125 => 1.25,
+                150 => 1.5,
+                200 => 2.0,
+                _ => 1.0,
+            },
+            subtitle_track: self.settings.video_subtitle_track,
+        };
         if self.video.is_none() {
             self.video = VideoView::new(self.hwnd, &self.d2d_factory)
                 .inspect_err(|error| report_failure("create surface", error.code().0))
@@ -365,6 +423,7 @@ impl AppState {
             return;
         };
         view.active = true;
+        view.preferences = saved_preferences;
         view.media = None;
         view.previous_position = None;
         view.started = started;
@@ -420,6 +479,7 @@ impl AppState {
                 let _ = KillTimer(Some(self.hwnd), TIMER_VIDEO_PANEL);
                 let _ = ShowWindow(view.surface, SW_HIDE);
             }
+            crate::ui::video::set_video_cursor_hidden(false);
             if let Some(playback) = &view.playback {
                 playback.stop(self.generation);
             }
@@ -453,6 +513,7 @@ impl AppState {
                     volume.layer.hide();
                 }
             }
+            crate::ui::video::set_video_cursor_hidden(false);
             playback.close();
         }
         true
@@ -626,7 +687,10 @@ impl AppState {
         };
         let allowed = !view.closing
             && unsafe { IsWindowVisible(self.hwnd).as_bool() && !IsIconic(self.hwnd).as_bool() };
-        let foreground = allowed && unsafe { GetForegroundWindow() == self.hwnd };
+        let foreground_window = unsafe { GetForegroundWindow() };
+        let foreground = allowed
+            && (foreground_window == self.hwnd
+                || unsafe { GetAncestor(foreground_window, GA_ROOTOWNER) == self.hwnd });
         let now = Instant::now();
         let status = view.display_status(now);
         let show = foreground && panel.wants_visible(view.controls_pinned(), now);
@@ -668,7 +732,7 @@ impl AppState {
             }
         }
         if let Some(progress) = &mut panel.progress {
-            let show = allowed && !panel.layer.visible && !view.failed();
+            let show = foreground && !panel.layer.visible && !view.failed();
             if show && let Some((mut origin, size)) = panel.edges.and_then(EdgeLayout::progress) {
                 unsafe {
                     let _ = ClientToScreen(self.hwnd, &mut origin);
@@ -735,8 +799,11 @@ impl AppState {
         let Some(panel) = &mut view.panel else {
             return;
         };
-        let foreground = unsafe { GetForegroundWindow() == self.hwnd };
+        let foreground_window = unsafe { GetForegroundWindow() };
+        let foreground = foreground_window == self.hwnd
+            || unsafe { GetAncestor(foreground_window, GA_ROOTOWNER) == self.hwnd };
         if !foreground {
+            crate::ui::video::set_video_cursor_hidden(false);
             let visible = panel.layer.visible
                 || panel.menu.as_ref().is_some_and(VideoMenu::opened)
                 || panel
@@ -784,6 +851,9 @@ impl AppState {
             zone = EdgeZone::Side;
         }
         let moved_screen = panel.cursor != Some(screen);
+        if moved_screen {
+            panel.cursor_activity = now;
+        }
         if zone != EdgeZone::None
             && (moved_screen || edge != panel.zone)
             && unsafe { GetAncestor(WindowFromPoint(screen), GA_ROOTOWNER) != self.hwnd }
@@ -846,11 +916,45 @@ impl AppState {
                 }
             }
         }
+        let inside_player =
+            unsafe { GetAncestor(WindowFromPoint(screen), GA_ROOTOWNER) == self.hwnd };
+        let controls_visible = panel.wants_visible(pinned, now);
+        let menu_open = panel.menu.as_ref().is_some_and(VideoMenu::opened);
+        let volume_visible = panel
+            .volume
+            .as_ref()
+            .is_some_and(|volume| volume.wants_visible(now));
+        let hide_cursor = inside_player
+            && matches!(status.phase, Phase::Playing | Phase::Paused | Phase::Ended)
+            && !controls_visible
+            && !menu_open
+            && !volume_visible
+            && now.duration_since(panel.cursor_activity) >= HIDE_AFTER;
+        crate::ui::video::set_video_cursor_hidden(hide_cursor);
         if let Some(value) = set_volume {
             self.set_video_volume(value, false);
         }
         if redraw {
             self.render_video_panel();
+        }
+    }
+
+    pub(super) fn video_activation_changed(&mut self, active: bool) {
+        crate::ui::video::set_video_cursor_hidden(false);
+        if let Some(panel) = self
+            .video
+            .as_deref_mut()
+            .filter(|view| view.active && !view.closing)
+            .and_then(|view| view.panel.as_mut())
+        {
+            panel.cursor = None;
+            panel.cursor_activity = Instant::now();
+        }
+        if active {
+            self.video_tick();
+            self.render_video_panel();
+        } else {
+            self.hide_video_panel();
         }
     }
 
@@ -1136,6 +1240,7 @@ impl AppState {
     }
 
     fn set_video_volume(&mut self, volume: i32, muted: bool) {
+        let mut changed = false;
         if let Some(view) = self.video.as_deref_mut().filter(|view| view.active) {
             let volume = volume.clamp(0, MAX_VOLUME);
             if view.preferences.volume == volume && view.preferences.muted == muted {
@@ -1144,15 +1249,24 @@ impl AppState {
             view.preferences.volume = volume;
             view.preferences.muted = muted;
             self.send_video_control(Control::Audio { volume, muted });
+            changed = true;
+        }
+        if changed {
+            self.schedule_video_preferences_save();
         }
     }
 
     pub(super) fn video_loop(&mut self) {
+        let mut changed = false;
         if let Some(view) = self.video.as_deref_mut().filter(|view| view.active) {
             view.preferences.looping = !view.preferences.looping;
             let looping = view.preferences.looping;
             self.send_video_control(Control::Loop(looping));
             self.reveal_video_panel();
+            changed = true;
+        }
+        if changed {
+            self.schedule_video_preferences_save();
         }
     }
 
@@ -1163,6 +1277,53 @@ impl AppState {
             view.preferences.rate = rate;
             self.send_video_control(Control::Rate(rate));
             self.reveal_video_panel();
+            self.schedule_video_preferences_save();
+        }
+    }
+
+    pub(super) fn video_subtitle(&mut self, id: i32) {
+        let mut changed = false;
+        let mut track_to_apply = None;
+        if let Some(view) = self.video.as_deref_mut().filter(|view| view.active) {
+            track_to_apply = if id == -2 {
+                let track = view
+                    .media
+                    .as_ref()
+                    .and_then(|media| media.subtitles.iter().find(|track| track.id >= 0))
+                    .map(|track| track.id);
+                view.preferences.subtitle_track = -2;
+                track
+            } else {
+                view.preferences.subtitle_track = id;
+                Some(id)
+            };
+            changed = true;
+        }
+        if let Some(track) = track_to_apply {
+            self.send_video_control(Control::SubtitleTrack(track));
+        }
+        if changed {
+            self.schedule_video_preferences_save();
+            self.refresh_video_menu();
+            self.render_video_panel();
+        }
+    }
+
+    fn schedule_video_preferences_save(&mut self) {
+        let Some(preferences) = self.video().map(|view| view.preferences) else {
+            return;
+        };
+        self.settings.video_volume = preferences.volume;
+        self.settings.video_muted = preferences.muted;
+        self.settings.video_looping = preferences.looping;
+        self.settings.video_rate_percent = (preferences.rate * 100.0).round() as u32;
+        self.settings.video_subtitle_track = preferences.subtitle_track;
+        let timer = unsafe {
+            let _ = KillTimer(Some(self.hwnd), TIMER_VIDEO_PREFERENCES);
+            SetTimer(Some(self.hwnd), TIMER_VIDEO_PREFERENCES, 450, None)
+        };
+        if timer == 0 {
+            self.settings.save_video_preferences();
         }
     }
 

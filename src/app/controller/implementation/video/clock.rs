@@ -34,7 +34,7 @@ impl Playhead {
         }
         let seeking = self.seek_preview.is_some();
         if let Some((start, target)) = self.seek_preview
-            && matches!(next.phase, Phase::Playing | Phase::Paused)
+            && matches!(next.phase, Phase::Opening | Phase::Playing | Phase::Paused)
             && now.duration_since(start).as_millis() < SEEK_PREVIEW_MS
             && next.elapsed_ms.abs_diff(target) > SYNC_TOLERANCE_MS
         {

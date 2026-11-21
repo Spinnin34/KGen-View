@@ -29,7 +29,7 @@ pub const WM_PLAYBACK: u32 = WM_APP + 11;
 pub const WM_PLAYBACK_CLOSED: u32 = WM_APP + 12;
 pub const MAX_VOLUME: i32 = 200;
 pub const MEDIA_ITEM_LIMIT: usize = 256;
-const REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const REFRESH_INTERVAL: Duration = Duration::from_millis(80);
 const OPEN_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 const OPEN_REFRESH_LIMIT: Duration = Duration::from_secs(1);
 
@@ -109,6 +109,8 @@ pub struct Preferences {
     pub muted: bool,
     pub looping: bool,
     pub rate: f32,
+    /// -2 keeps LibVLC's automatic track selection, -1 disables subtitles.
+    pub subtitle_track: i32,
 }
 
 impl Default for Preferences {
@@ -118,6 +120,7 @@ impl Default for Preferences {
             muted: false,
             looping: false,
             rate: 1.0,
+            subtitle_track: -2,
         }
     }
 }
@@ -217,11 +220,21 @@ impl Playback {
                     let mut details_changed = false;
                     if let Some(current) = &mut player {
                         let mut status = current.status();
+                        if current.apply_pending_seek() {
+                            status = current.status();
+                        }
                         if details.is_none()
                             && status.video_ready
                             && matches!(status.phase, Phase::Playing | Phase::Paused)
                         {
-                            details = Some(Arc::new(current.media_details()));
+                            let loaded = current.media_details();
+                            let selected = current.preferences.subtitle_track;
+                            if selected == -1
+                                || loaded.subtitles.iter().any(|track| track.id == selected)
+                            {
+                                current.control(Control::SubtitleTrack(selected));
+                            }
+                            details = Some(Arc::new(loaded));
                             details_changed = true;
                         }
                         if status.dimensions.is_some()
@@ -475,6 +488,7 @@ struct Player {
     end_ms: i64,
     had_output: bool,
     dimensions: Option<(u32, u32)>,
+    pending_seek_ms: Option<i64>,
 }
 
 impl Player {
@@ -512,6 +526,7 @@ impl Player {
                 end_ms: 0,
                 had_output: false,
                 dimensions: None,
+                pending_seek_ms: None,
             })
         }
     }
@@ -552,6 +567,7 @@ impl Player {
         current.end_ms = 0;
         current.had_output = false;
         current.dimensions = None;
+        current.pending_seek_ms = None;
         current.apply_audio();
         Ok(current)
     }
@@ -688,11 +704,34 @@ impl Player {
         }
     }
 
+    fn apply_pending_seek(&mut self) -> bool {
+        let Some(position) = self.pending_seek_ms else {
+            return false;
+        };
+        if !matches!(
+            unsafe { (self.api.libvlc_media_player_get_state)(self.player) },
+            3 | 4
+        ) {
+            return false;
+        }
+        unsafe { (self.api.libvlc_media_player_set_time)(self.player, position) };
+        self.pending_seek_ms = None;
+        true
+    }
+
     fn restart(&self) -> bool {
         unsafe {
             (self.api.libvlc_media_player_stop)(self.player);
             (self.api.libvlc_media_player_set_rate)(self.player, self.preferences.rate);
-            (self.api.libvlc_media_player_play)(self.player) == 0
+            if (self.api.libvlc_media_player_play)(self.player) != 0 {
+                return false;
+            }
+            self.apply_audio();
+            if self.preferences.subtitle_track >= -1 {
+                let _ =
+                    (self.api.libvlc_video_set_spu)(self.player, self.preferences.subtitle_track);
+            }
+            true
         }
     }
 
@@ -707,15 +746,25 @@ impl Player {
                     _ => {}
                 },
                 Control::Seek(ms) | Control::SeekBy(ms) => {
-                    if (api.libvlc_media_player_is_seekable)(player) != 0 {
+                    let state = (api.libvlc_media_player_get_state)(player);
+                    let seekable = (api.libvlc_media_player_is_seekable)(player) != 0;
+                    if seekable {
+                        let previous = (api.libvlc_media_player_get_time)(player).max(0);
+                        let ended = matches!(state, 5 | 6);
+                        if ended && !self.restart() {
+                            return false;
+                        }
                         let target = if matches!(action, Control::SeekBy(_)) {
-                            (api.libvlc_media_player_get_time)(player)
-                                .max(0)
-                                .saturating_add(ms)
+                            (if ended { self.end_ms } else { previous }).saturating_add(ms)
                         } else {
                             ms
                         };
-                        (api.libvlc_media_player_set_time)(player, target.clamp(0, self.end_ms));
+                        let target = target.clamp(0, self.end_ms);
+                        if ended {
+                            self.pending_seek_ms = Some(target);
+                        } else {
+                            (api.libvlc_media_player_set_time)(player, target);
+                        }
                     }
                 }
                 Control::NextFrame => {
@@ -725,7 +774,9 @@ impl Player {
                     return (api.libvlc_audio_set_track)(player, id) == 0 && id >= 0;
                 }
                 Control::SubtitleTrack(id) => {
-                    let _ = (api.libvlc_video_set_spu)(player, id);
+                    if (api.libvlc_video_set_spu)(player, id) == 0 {
+                        self.preferences.subtitle_track = id;
+                    }
                 }
                 Control::Audio { volume, muted } => {
                     self.preferences.volume = volume.clamp(0, MAX_VOLUME);

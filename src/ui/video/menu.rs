@@ -134,6 +134,8 @@ pub struct VideoMenu {
     focus: Option<usize>,
     hover: Option<MenuHit>,
     pressed: Option<MenuHit>,
+    pressed_command: Option<MenuCommand>,
+    clicked_command: Option<MenuCommand>,
     dirty: bool,
 }
 
@@ -152,6 +154,8 @@ impl VideoMenu {
             focus: None,
             hover: None,
             pressed: None,
+            pressed_command: None,
+            clicked_command: None,
             dirty: true,
         })
     }
@@ -167,6 +171,8 @@ impl VideoMenu {
         self.focus = None;
         self.hover = None;
         self.pressed = None;
+        self.pressed_command = None;
+        self.clicked_command = None;
         self.dirty = true;
     }
 
@@ -182,6 +188,8 @@ impl VideoMenu {
         self.page = None;
         self.layer.hide();
         self.pressed = None;
+        self.pressed_command = None;
+        self.clicked_command = None;
         self.dirty = true;
     }
 
@@ -189,6 +197,18 @@ impl VideoMenu {
         if self.title != title || self.rows != rows {
             self.title = title;
             self.rows = rows;
+            let visible_rows = self.layout.map_or(1, |layout| layout.visible_rows);
+            self.first = self.first.min(self.rows.len().saturating_sub(visible_rows));
+            if self.focus.is_some_and(|row| row >= self.rows.len()) {
+                self.focus = None;
+            }
+            if matches!(self.hover, Some(MenuHit::Row(row)) if row >= self.rows.len()) {
+                self.hover = None;
+            }
+            if matches!(self.pressed, Some(MenuHit::Row(row)) if row >= self.rows.len()) {
+                self.pressed = None;
+                self.pressed_command = None;
+            }
             self.dirty = true;
         }
     }
@@ -230,19 +250,33 @@ impl VideoMenu {
 
     pub fn press(&mut self, point: POINT) {
         self.pressed = self.hit(point);
+        self.pressed_command = match self.pressed {
+            Some(MenuHit::Row(row)) => self.rows.get(row).map(|row| row.command),
+            _ => None,
+        };
+        self.clicked_command = None;
     }
 
     pub fn release(&mut self, point: POINT) -> Option<MenuHit> {
         let hit = self.hit(point);
-        self.pressed.take().filter(|pressed| Some(*pressed) == hit)
+        let pressed = self.pressed.take();
+        let command = self.pressed_command.take();
+        self.clicked_command = (pressed == hit).then_some(command).flatten();
+        pressed.filter(|pressed| Some(*pressed) == hit)
     }
 
     pub fn cancel_press(&mut self) {
         self.pressed = None;
+        self.pressed_command = None;
+        self.clicked_command = None;
     }
 
     pub fn command_at(&self, row: usize) -> Option<MenuCommand> {
         self.rows.get(row).map(|row| row.command)
+    }
+
+    pub fn take_command_at(&mut self, row: usize) -> Option<MenuCommand> {
+        self.clicked_command.take().or_else(|| self.command_at(row))
     }
 
     pub fn focused(&self) -> Option<MenuHit> {

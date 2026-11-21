@@ -1,11 +1,15 @@
 use super::super::video::TIMER_VIDEO_PANEL;
 use super::*;
 use crate::platform::playback::{WM_PLAYBACK, WM_PLAYBACK_CLOSED};
-use crate::ui::video::{WM_PANEL_INPUT, WM_VIDEO_MENU_INPUT, WM_VOLUME_INPUT};
+use crate::ui::video::{
+    WM_PANEL_INPUT, WM_VIDEO_MENU_INPUT, WM_VOLUME_INPUT, set_video_cursor_hidden,
+    video_cursor_hidden,
+};
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{VK_DOWN, VK_RETURN, VK_TAB, VK_UP},
     WindowsAndMessaging::{
-        ENDSESSION_CLOSEAPP, WM_ACTIVATE, WM_ENDSESSION, WM_MOVE, WM_QUERYENDSESSION,
+        ENDSESSION_CLOSEAPP, SetCursor, WA_INACTIVE, WM_ACTIVATE, WM_ENDSESSION, WM_MOVE,
+        WM_QUERYENDSESSION, WM_SETCURSOR,
     },
 };
 
@@ -110,8 +114,12 @@ pub(super) unsafe extern "system" fn window_proc(
             unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
         }
         WM_ACTIVATE => {
-            state.video_tick();
+            state.video_activation_changed(u32::from(loword(wparam.0)) != WA_INACTIVE);
             unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+        WM_SETCURSOR if video_cursor_hidden() => {
+            unsafe { SetCursor(None) };
+            LRESULT(1)
         }
         WM_SETTINGCHANGE => {
             if state.settings.theme == ThemeMode::System {
@@ -423,6 +431,11 @@ pub(super) unsafe extern "system" fn window_proc(
                 state.change_frame(1);
             } else if wparam.0 == TIMER_VIDEO_PANEL {
                 state.video_tick();
+            } else if wparam.0 == TIMER_VIDEO_PREFERENCES {
+                unsafe {
+                    let _ = KillTimer(Some(hwnd), TIMER_VIDEO_PREFERENCES);
+                }
+                state.settings.save_video_preferences();
             } else if wparam.0 == TIMER_WHEEL_NAVIGATION {
                 state.flush_wheel_navigation();
             } else if wparam.0 == TIMER_VIEW {
@@ -476,6 +489,7 @@ pub(super) unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         WM_DESTROY => {
+            set_video_cursor_hidden(false);
             state.alive.store(false, Ordering::Release);
             state.upload_result.close();
             state.update_events.close();

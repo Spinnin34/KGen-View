@@ -185,24 +185,36 @@ impl AppState {
                 }
                 (tr("Audio", "Audio"), rows)
             }
-            MenuPage::Subtitles => (
-                tr("Subtítulos", "Subtitles"),
-                subtitles
-                    .iter()
-                    .enumerate()
-                    .map(|(index, track)| {
-                        let label = if track.id < 0 {
-                            tr("Desactivados", "Off").to_owned()
-                        } else if track.name.is_empty() {
-                            format!("{} {}", tr("Pista", "Track"), index + 1)
-                        } else {
-                            track.name.clone()
-                        };
-                        MenuRow::new(label, "", MenuCommand::Subtitle(track.id))
-                            .selected(status.subtitle_track == track.id)
-                    })
-                    .collect(),
-            ),
+            MenuPage::Subtitles => {
+                let automatic = prefs.subtitle_track == -2
+                    || !subtitles
+                        .iter()
+                        .any(|track| track.id == prefs.subtitle_track);
+                let mut rows = vec![
+                    MenuRow::new(tr("Automático", "Automatic"), "", MenuCommand::Subtitle(-2))
+                        .selected(automatic),
+                ];
+                rows.push(
+                    MenuRow::new(tr("Desactivados", "Off"), "", MenuCommand::Subtitle(-1))
+                        .selected(prefs.subtitle_track == -1),
+                );
+                rows.extend(
+                    subtitles
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, track)| track.id >= 0)
+                        .map(|(index, track)| {
+                            let label = if track.name.is_empty() {
+                                format!("{} {}", tr("Pista", "Track"), index + 1)
+                            } else {
+                                track.name.clone()
+                            };
+                            MenuRow::new(label, "", MenuCommand::Subtitle(track.id))
+                                .selected(prefs.subtitle_track == track.id)
+                        }),
+                );
+                (tr("Subtítulos", "Subtitles"), rows)
+            }
             MenuPage::Chapters => {
                 let active = chapters
                     .partition_point(|chapter| chapter.start_ms <= status.elapsed_ms)
@@ -344,7 +356,9 @@ impl AppState {
                 self.render_video_panel();
                 return;
             }
-            MenuHit::Row(row) => self.video_menu_ref().and_then(|menu| menu.command_at(row)),
+            MenuHit::Row(row) => self
+                .video_menu_mut()
+                .and_then(|menu| menu.take_command_at(row)),
         };
         let Some(command) = command else { return };
         match command {
@@ -365,7 +379,7 @@ impl AppState {
             MenuCommand::Volume(delta) => self.video_audio(delta, false),
             MenuCommand::Mute => self.video_audio(0, true),
             MenuCommand::Audio(id) => self.send_video_control(Control::AudioTrack(id)),
-            MenuCommand::Subtitle(id) => self.send_video_control(Control::SubtitleTrack(id)),
+            MenuCommand::Subtitle(id) => self.video_subtitle(id),
             MenuCommand::Chapter(position) => {
                 self.close_video_menu();
                 self.video_seek_to(position);

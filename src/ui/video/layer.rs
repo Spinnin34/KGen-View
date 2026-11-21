@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::mem::size_of;
 
 use windows::{
@@ -33,6 +34,28 @@ pub const WM_PANEL_INPUT: u32 = WM_APP + 13;
 pub const WM_VOLUME_INPUT: u32 = WM_APP + 14;
 pub const WM_VIDEO_MENU_INPUT: u32 = WM_APP + 15;
 const CLASS: windows::core::PCWSTR = w!("KGenView.VideoControls");
+
+thread_local! {
+    static VIDEO_CURSOR_HIDDEN: Cell<bool> = const { Cell::new(false) };
+}
+
+pub fn set_video_cursor_hidden(hidden: bool) {
+    let changed = VIDEO_CURSOR_HIDDEN.with(|value| value.replace(hidden) != hidden);
+    if changed {
+        unsafe {
+            let cursor = if hidden {
+                None
+            } else {
+                LoadCursorW(None, IDC_ARROW).ok()
+            };
+            let _ = SetCursor(cursor);
+        }
+    }
+}
+
+pub fn video_cursor_hidden() -> bool {
+    VIDEO_CURSOR_HIDDEN.with(Cell::get)
+}
 
 pub enum LayerKind {
     Controls,
@@ -271,6 +294,10 @@ unsafe extern "system" fn window_proc(
     unsafe {
         match msg {
             WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+            WM_SETCURSOR if video_cursor_hidden() => {
+                let _ = SetCursor(None);
+                LRESULT(1)
+            }
             WM_LBUTTONDOWN | WM_LBUTTONUP | WM_CAPTURECHANGED => {
                 let route = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as u32;
                 if route == 0 {

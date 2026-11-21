@@ -35,6 +35,11 @@ pub struct Settings {
     pub capture_enabled: bool,
     pub capture_start_with_windows: bool,
     pub capture_hotkey: CaptureHotkey,
+    pub video_volume: i32,
+    pub video_muted: bool,
+    pub video_looping: bool,
+    pub video_rate_percent: u32,
+    pub video_subtitle_track: i32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +72,11 @@ impl Default for Settings {
             capture_enabled: false,
             capture_start_with_windows: false,
             capture_hotkey: CaptureHotkey::default(),
+            video_volume: 100,
+            video_muted: false,
+            video_looping: false,
+            video_rate_percent: 100,
+            video_subtitle_track: -2,
         }
     }
 }
@@ -81,6 +91,9 @@ impl Settings {
         let previous_default = (saved_capture_key == Some(0x2c)
             && saved_capture_modifiers.unwrap_or(0) == 0)
             || (saved_capture_key == Some(0x5a) && saved_capture_modifiers == Some(0x06));
+        let video_rate_percent = read_dword("VideoRatePercent")
+            .filter(|value| matches!(*value, 50 | 75 | 100 | 125 | 150 | 200))
+            .unwrap_or(100);
         let capture_hotkey = if previous_default {
             defaults.capture_hotkey
         } else {
@@ -118,6 +131,14 @@ impl Settings {
                 .map(|v| v != 0)
                 .unwrap_or(false),
             capture_hotkey,
+            video_volume: read_dword("VideoVolume").unwrap_or(100).min(200) as i32,
+            video_muted: read_dword("VideoMuted").is_some_and(|value| value != 0),
+            video_looping: read_dword("VideoLooping").is_some_and(|value| value != 0),
+            video_rate_percent,
+            video_subtitle_track: read_dword("VideoSubtitleTrack")
+                .map(|value| value as i32)
+                .filter(|value| *value >= -2)
+                .unwrap_or(-2),
         }
     }
 
@@ -148,7 +169,16 @@ impl Settings {
         write_dword("CaptureStartup", self.capture_start_with_windows as u32);
         write_dword("CaptureHotkeyKey", self.capture_hotkey.key);
         write_dword("CaptureHotkeyModifiers", self.capture_hotkey.modifiers);
+        self.save_video_preferences();
         sync_capture_startup(self.capture_enabled && self.capture_start_with_windows);
+    }
+
+    pub fn save_video_preferences(&self) {
+        write_dword("VideoVolume", self.video_volume.clamp(0, 200) as u32);
+        write_dword("VideoMuted", self.video_muted as u32);
+        write_dword("VideoLooping", self.video_looping as u32);
+        write_dword("VideoRatePercent", self.video_rate_percent);
+        write_dword("VideoSubtitleTrack", self.video_subtitle_track as u32);
     }
 
     pub fn is_dark(&self) -> bool {
