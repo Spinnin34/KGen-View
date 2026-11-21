@@ -483,6 +483,8 @@ pub(super) unsafe extern "system" fn window_proc(
                 }
             } else if wparam.0 == TIMER_STARTUP_WINDOW {
                 state.present_startup_window();
+            } else if wparam.0 == TIMER_UPDATE_CHECK {
+                state.begin_update_check();
             }
             LRESULT(0)
         }

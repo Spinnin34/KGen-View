@@ -2,10 +2,18 @@ use super::*;
 
 impl AppState {
     pub(super) fn begin_update_check(&mut self) {
-        if let Err(error) =
-            updater::start_check(self.hwnd, self.alive.clone(), self.update_events.clone())
+        if self.update_check_busy
+            || self.update_available.is_some()
+            || self.update_download_busy
+            || self.install_on_exit.is_some()
+            || !updater::is_installed_copy()
         {
-            eprintln!("KGen View update check: {error}");
+            return;
+        }
+
+        match updater::start_check(self.hwnd, self.alive.clone(), self.update_events.clone()) {
+            Ok(()) => self.update_check_busy = true,
+            Err(error) => eprintln!("KGen View update check: {error}"),
         }
     }
 
@@ -14,18 +22,21 @@ impl AppState {
             return;
         };
         match event {
-            UpdateEvent::CheckComplete(Ok(update)) => {
-                self.update_available = update;
-                self.layout_video_panel();
-                if self.update_available.is_some() {
-                    self.reveal_video_panel();
+            UpdateEvent::CheckComplete(result) => {
+                self.update_check_busy = false;
+                match result {
+                    Ok(update) => {
+                        self.update_available = update;
+                        self.layout_video_panel();
+                        if self.update_available.is_some() {
+                            self.reveal_video_panel();
+                        }
+                        unsafe {
+                            let _ = InvalidateRect(Some(self.hwnd), None, false);
+                        }
+                    }
+                    Err(error) => eprintln!("KGen View update check: {error}"),
                 }
-                unsafe {
-                    let _ = InvalidateRect(Some(self.hwnd), None, false);
-                }
-            }
-            UpdateEvent::CheckComplete(Err(error)) => {
-                eprintln!("KGen View update check: {error}");
             }
             UpdateEvent::DownloadComplete(result) => {
                 self.update_download_busy = false;

@@ -121,9 +121,11 @@ const TIMER_STARTUP_WINDOW: usize = 4;
 const TIMER_AUTO_ADVANCE: usize = 6;
 const TIMER_WHEEL_NAVIGATION: usize = 7;
 const TIMER_VIDEO_PREFERENCES: usize = 8;
+const TIMER_UPDATE_CHECK: usize = 9;
 const FOLDER_REFRESH_INTERVAL_MS: u32 = 5_000;
 const STARTUP_WINDOW_DELAY_MS: u32 = 700;
 const WHEEL_NAVIGATION_COALESCE_MS: u32 = 24;
+const UPDATE_CHECK_INTERVAL_MS: u32 = 15 * 60 * 1_000;
 #[derive(Clone, Copy, Debug)]
 enum ZoomMode {
     Fit,
@@ -227,6 +229,7 @@ struct AppState {
     upload_result: Arc<Mailbox<UploadPayload>>,
     update_events: Arc<Mailbox<UpdateEvent>>,
     update_available: Option<UpdateInfo>,
+    update_check_busy: bool,
     update_download_busy: bool,
     install_on_exit: Option<updater::InstallOnExit>,
     chrome: Chrome,

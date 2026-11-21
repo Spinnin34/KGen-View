@@ -87,6 +87,15 @@ pub fn run() -> Result<(), WinError> {
                 STARTUP_WINDOW_DELAY_MS,
                 None,
             ) != 0;
+        if SetTimer(
+            Some(hwnd),
+            TIMER_UPDATE_CHECK,
+            UPDATE_CHECK_INTERVAL_MS,
+            None,
+        ) == 0
+        {
+            eprintln!("KGen View could not start the periodic update check timer.");
+        }
         if !state.startup_window_pending {
             show_main_window(hwnd);
         }

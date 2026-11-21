@@ -47,6 +47,7 @@ impl AppState {
             upload_result: Arc::new(Mailbox::default()),
             update_events: Arc::new(Mailbox::default()),
             update_available: None,
+            update_check_busy: false,
             update_download_busy: false,
             install_on_exit: None,
             chrome: Chrome::new(),
