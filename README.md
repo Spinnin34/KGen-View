@@ -26,8 +26,8 @@ KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está constr
 - Modo oscuro, modo claro y seguimiento del tema del sistema.
 - Cambio de idioma entre español e inglés.
 - Arrastrar y soltar, apertura desde el Explorador y apertura por línea de comandos.
-- Navegación circular por las imágenes y los vídeos de la carpeta, con orden natural para nombres como `imagen2.png` e `imagen10.png`.
-- Reproducción de vídeos locales con sonido, pausa, búsqueda, volumen, silencio y pantalla completa.
+- Navegación circular por las imágenes o por los vídeos de la carpeta, según el archivo abierto, con orden natural para nombres como `imagen2.png` e `imagen10.png`.
+- Reproducción de vídeos locales con sonido y controles flotantes, bucle, búsqueda por arrastre, velocidad y pantalla completa.
 - Apertura de archivos ZIP y CBZ: indexado rápido y extracción bajo demanda mientras se navega por las imágenes.
 - Al abrir desde el Explorador una imagen dentro de un ZIP, carga el archivo completo y se sitúa en esa imagen.
 - Redimensionado automático de la ventana para aprovechar el espacio disponible.
@@ -75,6 +75,8 @@ WebP y HEIF/HEIC dependen de los codecs instalados en Windows. JPEG XL se decodi
 
 El instalador y el ZIP portátil incluyen LibVLC 3 para reproducir archivos locales como MP4, MKV, WebM, MOV, AVI, WMV, MPEG, M2TS, FLV, OGV y 3GP. La compatibilidad depende del códec de las pistas y del contenedor. LibVLC usa decodificación por hardware cuando el códec, la GPU y el controlador son compatibles, y puede decodificar por software en los demás casos. La carpeta `vlc` incluye los avisos de licencia y enlaces al código fuente de VideoLAN.
 
+Al mover el ratón sobre la ventana aparecen los controles flotantes. El panel se oculta después de unos segundos de inactividad y permanece visible mientras se usa. Arrastra la barra de progreso para elegir el punto de reproducción. El menú **Más opciones** incluye avances de diez segundos y velocidades de 0,5× a 2×. El ajuste automático adapta la ventana al tamaño y orientación del vídeo dentro del monitor. Las flechas, la rueda, Inicio y Fin recorren el tipo de archivo abierto.
+
 ### Exportación
 
 En **Editar → Convertir formato**, elige uno de los formatos que Windows tiene disponibles mediante WIC en ese equipo. La lista puede incluir PNG, JPEG, BMP, TIFF, GIF, JPEG XR y otros formatos si hay un codificador instalado. La ventana permite guardar una copia sin cambiar el archivo abierto y muestra una animación mientras se convierte. En imágenes animadas o documentos multipágina se exporta el fotograma visible.
@@ -101,8 +103,11 @@ Activa **Opciones -> Activar captura rectangular** para habilitar la captura. Ca
 | Fotograma o página anterior / siguiente | `RePág` / `AvPág` |
 | Pausar o reanudar vídeo o animación | `Espacio` |
 | Retroceder o avanzar 5 segundos en un vídeo | `RePág` / `AvPág` |
+| Retroceder o avanzar 10 segundos en un vídeo | `J` / `L` |
 | Subir o bajar el volumen del vídeo | `↑` / `↓` |
 | Silenciar o recuperar el sonido del vídeo | `M` |
+| Activar o desactivar el bucle del vídeo | `B` |
+| Recorrer y activar los botones del reproductor | `Tab` / `Intro` |
 | Presentación | `F5` |
 | Recargar imagen | `F9` |
 | Captura rectangular (si esta activada) | `Ctrl + Win + Z` (configurable) |

@@ -16,6 +16,10 @@ impl AppState {
         match event {
             UpdateEvent::CheckComplete(Ok(update)) => {
                 self.update_available = update;
+                self.layout_video_panel();
+                if self.update_available.is_some() {
+                    self.reveal_video_panel();
+                }
                 unsafe {
                     let _ = InvalidateRect(Some(self.hwnd), None, false);
                 }

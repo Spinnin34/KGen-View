@@ -1,6 +1,11 @@
+use super::super::video::TIMER_VIDEO_PANEL;
 use super::*;
 use crate::platform::playback::{WM_PLAYBACK, WM_PLAYBACK_CLOSED};
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_UP};
+use crate::ui::video::WM_PANEL_INPUT;
+use windows::Win32::UI::{
+    Input::KeyboardAndMouse::{VK_DOWN, VK_RETURN, VK_TAB, VK_UP},
+    WindowsAndMessaging::{WM_ACTIVATE, WM_MOVE},
+};
 
 pub(super) unsafe extern "system" fn window_proc(
     hwnd: HWND,
@@ -98,6 +103,14 @@ pub(super) unsafe extern "system" fn window_proc(
             }
             LRESULT(0)
         }
+        WM_MOVE => {
+            state.render_video_panel();
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+        WM_ACTIVATE => {
+            state.video_tick();
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
         WM_SETTINGCHANGE => {
             if state.settings.theme == ThemeMode::System {
                 unsafe {
@@ -111,9 +124,7 @@ pub(super) unsafe extern "system" fn window_proc(
             let mut ps = PAINTSTRUCT::default();
             unsafe {
                 BeginPaint(hwnd, &mut ps);
-                if !state.paint_video_update(ps.hdc, ps.rcPaint) {
-                    state.paint(ps.hdc);
-                }
+                state.paint(ps.hdc);
                 let _ = EndPaint(hwnd, &ps);
             }
             LRESULT(0)
@@ -150,17 +161,24 @@ pub(super) unsafe extern "system" fn window_proc(
         WM_MOUSEWHEEL => {
             let delta = hiword(wparam.0) as i16;
             if unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0 {
-                let mut point = point_from_lparam(lparam);
-                unsafe {
-                    let _ = ScreenToClient(hwnd, &mut point);
+                if state.video().is_some() {
+                    state.video_audio(if delta > 0 { 5 } else { -5 }, false);
+                } else {
+                    let mut point = point_from_lparam(lparam);
+                    unsafe {
+                        let _ = ScreenToClient(hwnd, &mut point);
+                    }
+                    state.change_zoom_at(if delta > 0 { 1.15 } else { 1.0 / 1.15 }, Some(point));
                 }
-                state.change_zoom_at(if delta > 0 { 1.15 } else { 1.0 / 1.15 }, Some(point));
             } else {
                 state.navigate_wheel(if delta > 0 { -1 } else { 1 });
             }
             LRESULT(0)
         }
         WM_LBUTTONDOWN => {
+            if state.video_canvas_click() {
+                return LRESULT(0);
+            }
             let point = point_from_lparam(lparam);
             let layout = state.chrome_layout();
             if state.chrome.menu.press(&layout, point).is_some()
@@ -170,10 +188,7 @@ pub(super) unsafe extern "system" fn window_proc(
                     SetCapture(hwnd);
                     let _ = InvalidateRect(Some(hwnd), None, false);
                 }
-            } else if !state.click_video(point, &layout)
-                && point.y >= state.image_area().top
-                && point.y < state.image_area().bottom
-            {
+            } else if point.y >= state.image_area().top && point.y < state.image_area().bottom {
                 state.selection_start = Some(point);
                 state.selection_end = Some(point);
                 unsafe {
@@ -183,6 +198,10 @@ pub(super) unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         WM_MOUSEMOVE => {
+            if state.video().is_some() {
+                state.video_tick();
+                return LRESULT(0);
+            }
             let point = point_from_lparam(lparam);
             let layout = state.chrome_layout();
             let menu_changed = state.chrome.menu.update_hover(&layout, point);
@@ -213,6 +232,9 @@ pub(super) unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         WM_LBUTTONUP => {
+            if state.video().is_some() {
+                return LRESULT(0);
+            }
             let point = point_from_lparam(lparam);
             let layout = state.chrome_layout();
             let menu_interaction = state.chrome.menu.pressed.is_some();
@@ -237,6 +259,9 @@ pub(super) unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         WM_MBUTTONDOWN => {
+            if state.video().is_some() {
+                return LRESULT(0);
+            }
             state.middle_start = Some(point_from_lparam(lparam));
             unsafe {
                 SetCapture(hwnd);
@@ -293,6 +318,10 @@ pub(super) unsafe extern "system" fn window_proc(
         }
         WM_PLAYBACK => {
             state.accept_video_status();
+            LRESULT(0)
+        }
+        WM_PANEL_INPUT => {
+            state.video_input(wparam.0 as u32, point_from_lparam(lparam));
             LRESULT(0)
         }
         WM_PLAYBACK_CLOSED => {
@@ -380,6 +409,8 @@ pub(super) unsafe extern "system" fn window_proc(
         WM_TIMER => {
             if wparam.0 == TIMER_ANIMATION {
                 state.change_frame(1);
+            } else if wparam.0 == TIMER_VIDEO_PANEL {
+                state.video_tick();
             } else if wparam.0 == TIMER_WHEEL_NAVIGATION {
                 state.flush_wheel_navigation();
             } else if wparam.0 == TIMER_VIEW {
@@ -455,6 +486,11 @@ fn handle_key(state: &mut AppState, key: u32) {
             k if k == VK_NEXT.0 as u32 => return state.video_seek_relative(5_000),
             k if k == VK_UP.0 as u32 => return state.video_audio(5, false),
             k if k == VK_DOWN.0 as u32 => return state.video_audio(-5, false),
+            k if k == VK_TAB.0 as u32 => return state.video_focus(shift),
+            k if k == VK_RETURN.0 as u32 => return state.video_activate_focus(),
+            0x42 => return state.video_loop(),
+            0x4A => return state.video_seek_relative(-10_000),
+            0x4C => return state.video_seek_relative(10_000),
             0x4D => return state.video_audio(0, true),
             _ => {}
         }
@@ -474,6 +510,8 @@ fn handle_key(state: &mut AppState, key: u32) {
         k if k == VK_ESCAPE.0 as u32 => {
             if state.fullscreen {
                 state.toggle_fullscreen();
+            } else {
+                state.hide_video_panel();
             }
         }
         k if k == VK_ADD.0 as u32 || k == VK_OEM_PLUS.0 as u32 => state.change_zoom(1.15),

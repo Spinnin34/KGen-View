@@ -27,9 +27,8 @@ impl AppState {
         ChromeLayout::calculate(
             self.hwnd,
             rect,
-            self.fullscreen,
+            self.fullscreen || self.video().is_some(),
             self.update_available.is_some(),
-            self.video().is_some(),
         )
     }
 
@@ -173,6 +172,15 @@ impl AppState {
     }
 
     pub(super) unsafe fn paint(&mut self, hdc: windows::Win32::Graphics::Gdi::HDC) {
+        if self.video().is_some() {
+            use windows::Win32::Graphics::Gdi::{BLACK_BRUSH, FillRect, GetStockObject, HBRUSH};
+            let mut client = RECT::default();
+            unsafe {
+                let _ = GetClientRect(self.hwnd, &mut client);
+                FillRect(hdc, &client, HBRUSH(GetStockObject(BLACK_BRUSH).0));
+            }
+            return;
+        }
         if unsafe { self.ensure_target() }.is_err() {
             return;
         }
@@ -259,7 +267,6 @@ impl AppState {
                 crate::diagnostics::elapsed(stage, started.elapsed());
             }
             unsafe {
-                self.draw_video_bar(hdc, &layout);
                 crate::ui::status::draw(hdc, &layout, &status, self.settings.is_dark());
             }
         }

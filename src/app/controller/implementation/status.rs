@@ -10,6 +10,9 @@ impl AppState {
     }
 
     pub(super) fn update_status(&mut self, temporary: Option<&str>) {
+        if self.video_notice(temporary) {
+            return;
+        }
         self.status_model = if let Some(value) = temporary {
             StatusModel::message(value)
         } else if let Some(document) = &self.document {
@@ -29,19 +32,6 @@ impl AppState {
                 size: Some(format!("{} / {}", disk_size, ram_size)),
                 date: Some(file_time),
                 message: None,
-            }
-        } else if self.video().is_some() {
-            StatusModel {
-                primary: if self.lang() == Language::Spanish {
-                    "Vídeo"
-                } else {
-                    "Video"
-                }
-                .into(),
-                position: self
-                    .image_position()
-                    .map(|(index, count)| format!("{index}/{count}")),
-                ..StatusModel::default()
             }
         } else {
             StatusModel::message(tr(self.lang(), Text::NoImage))

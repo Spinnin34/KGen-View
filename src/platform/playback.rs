@@ -46,6 +46,7 @@ pub struct PlaybackStatus {
     pub duration_ms: i64,
     pub seekable: bool,
     pub video_ready: bool,
+    pub dimensions: Option<(u32, u32)>,
 }
 
 impl PlaybackStatus {
@@ -56,6 +57,7 @@ impl PlaybackStatus {
             duration_ms: 0,
             seekable: false,
             video_ready: false,
+            dimensions: None,
         }
     }
 }
@@ -63,15 +65,36 @@ impl PlaybackStatus {
 pub enum Control {
     TogglePause,
     Seek(i64),
+    SeekBy(i64),
     Audio { volume: i32, muted: bool },
+    Loop(bool),
+    Rate(f32),
+}
+
+#[derive(Clone, Copy)]
+pub struct Preferences {
+    pub volume: i32,
+    pub muted: bool,
+    pub looping: bool,
+    pub rate: f32,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            volume: 100,
+            muted: false,
+            looping: false,
+            rate: 1.0,
+        }
+    }
 }
 
 enum Request {
     Open {
         generation: u64,
         path: String,
-        volume: i32,
-        muted: bool,
+        preferences: Preferences,
     },
     Input(u64, Control),
     Stop(u64),
@@ -118,12 +141,11 @@ impl Playback {
                         Some(Request::Open {
                             generation: requested,
                             path,
-                            volume,
-                            muted,
+                            preferences,
                         }) if requested == latest.load(Ordering::Acquire) => {
                             generation = requested;
                             previous = None;
-                            match Player::open(player.take(), surface, &path, volume, muted) {
+                            match Player::open(player.take(), surface, &path, preferences) {
                                 Ok(opened) => {
                                     player = Some(opened);
                                     audio_pending = true;
@@ -131,7 +153,10 @@ impl Playback {
                                 Err(error) => snapshot = Some(PlaybackStatus::new(error)),
                             }
                         }
-                        Some(Request::Input(requested, action)) if requested == generation => {
+                        Some(Request::Input(requested, action))
+                            if requested == generation
+                                && requested == latest.load(Ordering::Acquire) =>
+                        {
                             if let Some(player) = &mut player {
                                 audio_pending |= player.control(action);
                             }
@@ -146,7 +171,20 @@ impl Playback {
                         _ => {}
                     }
                     if let Some(current) = &mut player {
-                        let status = current.status();
+                        let mut status = current.status();
+                        if status.phase == Phase::Ended
+                            && current.preferences.looping
+                            && generation == latest.load(Ordering::Acquire)
+                        {
+                            if current.restart() {
+                                audio_pending = true;
+                                status.phase = Phase::Opening;
+                                status.elapsed_ms = 0;
+                                status.seekable = false;
+                            } else {
+                                status.phase = Phase::Failed;
+                            }
+                        }
                         if audio_pending && matches!(status.phase, Phase::Playing | Phase::Paused) {
                             audio_pending = !current.apply_audio();
                         }
@@ -180,13 +218,12 @@ impl Playback {
         })
     }
 
-    pub fn open(&self, generation: u64, path: String, volume: i32, muted: bool) {
+    pub fn open(&self, generation: u64, path: String, preferences: Preferences) {
         self.latest_generation.store(generation, Ordering::Release);
         let _ = self.commands.send(Request::Open {
             generation,
             path,
-            volume,
-            muted,
+            preferences,
         });
     }
 
@@ -266,9 +303,12 @@ libvlc_api! {
     libvlc_release: fn(Handle),
     libvlc_media_new_path: fn(Handle, *const c_char) -> Handle,
     libvlc_media_release: fn(Handle),
+    libvlc_media_tracks_get: fn(Handle, *mut *mut *const MediaTrack) -> u32,
+    libvlc_media_tracks_release: fn(*mut *const MediaTrack, u32),
     libvlc_media_player_new: fn(Handle) -> Handle,
     libvlc_media_player_release: fn(Handle),
     libvlc_media_player_set_media: fn(Handle, Handle),
+    libvlc_media_player_get_media: fn(Handle) -> Handle,
     libvlc_media_player_set_hwnd: fn(Handle, Handle),
     libvlc_video_set_mouse_input: fn(Handle, u32),
     libvlc_video_set_key_input: fn(Handle, u32),
@@ -279,20 +319,68 @@ libvlc_api! {
     libvlc_media_player_get_time: fn(Handle) -> i64,
     libvlc_media_player_get_length: fn(Handle) -> i64,
     libvlc_media_player_set_time: fn(Handle, i64),
+    libvlc_media_player_set_rate: fn(Handle, f32) -> c_int,
     libvlc_media_player_is_seekable: fn(Handle) -> c_int,
     libvlc_media_player_has_vout: fn(Handle) -> u32,
+    libvlc_video_get_track: fn(Handle) -> c_int,
     libvlc_audio_set_volume: fn(Handle, c_int) -> c_int,
     libvlc_audio_set_mute: fn(Handle, c_int),
+}
+
+// Prefixes of the C structs in the LibVLC 3 media API. The details union
+// is read as a video pointer only for tracks flagged as video.
+#[repr(C)]
+struct MediaTrack {
+    _codec: u32,
+    _original_codec: u32,
+    id: c_int,
+    kind: c_int,
+    _profile: c_int,
+    _level: c_int,
+    video: *const VideoTrack,
+}
+
+#[repr(C)]
+struct VideoTrack {
+    height: u32,
+    width: u32,
+    sample_aspect_num: u32,
+    sample_aspect_den: u32,
+    _frame_rate_num: u32,
+    _frame_rate_den: u32,
+    orientation: c_int,
+}
+
+impl VideoTrack {
+    fn display_dimensions(&self) -> Option<(u32, u32)> {
+        if self.width == 0 || self.height == 0 {
+            return None;
+        }
+        let width = match (self.sample_aspect_num, self.sample_aspect_den) {
+            (0, _) | (_, 0) => self.width,
+            (num, den) => {
+                let den = u64::from(den);
+                let pixels = (u64::from(self.width) * u64::from(num) + den / 2) / den;
+                pixels.clamp(1, u64::from(u32::MAX)) as u32
+            }
+        };
+        // Transposed orientations exchange the two display axes.
+        Some(if (4..=7).contains(&self.orientation) {
+            (self.height, width)
+        } else {
+            (width, self.height)
+        })
+    }
 }
 
 struct Player {
     api: Api,
     instance: Handle,
     player: Handle,
-    volume: i32,
-    muted: bool,
+    preferences: Preferences,
     end_ms: i64,
     had_output: bool,
+    dimensions: Option<(u32, u32)>,
 }
 
 impl Player {
@@ -326,10 +414,10 @@ impl Player {
                 api,
                 instance,
                 player,
-                volume: 100,
-                muted: false,
+                preferences: Preferences::default(),
                 end_ms: 0,
                 had_output: false,
+                dimensions: None,
             })
         }
     }
@@ -338,8 +426,7 @@ impl Player {
         previous: Option<Self>,
         surface: HWND,
         path: &str,
-        volume: i32,
-        muted: bool,
+        preferences: Preferences,
     ) -> Result<Self, Phase> {
         let mut current = match previous {
             Some(player) => {
@@ -349,6 +436,7 @@ impl Player {
             None => Self::create(surface)?,
         };
         let path = CString::new(path).map_err(|_| Phase::Failed)?;
+        current.preferences = preferences;
         let api = &current.api;
         unsafe {
             let media = (api.libvlc_media_new_path)(current.instance, path.as_ptr());
@@ -358,6 +446,7 @@ impl Player {
             }
             (api.libvlc_media_player_set_media)(current.player, media);
             (api.libvlc_media_release)(media);
+            (api.libvlc_media_player_set_rate)(current.player, preferences.rate);
             if (api.libvlc_media_player_play)(current.player) != 0 {
                 report_failure("start LibVLC playback", 0);
                 return Err(Phase::Failed);
@@ -365,8 +454,7 @@ impl Player {
         }
         current.end_ms = 0;
         current.had_output = false;
-        current.volume = volume;
-        current.muted = muted;
+        current.dimensions = None;
         current.apply_audio();
         Ok(current)
     }
@@ -377,6 +465,9 @@ impl Player {
         unsafe {
             let elapsed = (api.libvlc_media_player_get_time)(player).max(0);
             let video_ready = (api.libvlc_media_player_has_vout)(player) != 0;
+            if video_ready && self.dimensions.is_none() {
+                self.dimensions = self.video_dimensions();
+            }
             let duration = (api.libvlc_media_player_get_length)(player);
             if duration > 0 {
                 self.end_ms = duration;
@@ -403,14 +494,54 @@ impl Player {
                 duration_ms: self.end_ms,
                 seekable: (api.libvlc_media_player_is_seekable)(player) != 0 && self.end_ms > 0,
                 video_ready,
+                dimensions: self.dimensions,
             }
+        }
+    }
+
+    fn video_dimensions(&self) -> Option<(u32, u32)> {
+        const VIDEO_TRACK: c_int = 1;
+        let api = &self.api;
+        unsafe {
+            let media = (api.libvlc_media_player_get_media)(self.player);
+            if media.is_null() {
+                return None;
+            }
+            let mut tracks = std::ptr::null_mut();
+            let count = (api.libvlc_media_tracks_get)(media, &mut tracks);
+            (api.libvlc_media_release)(media);
+            if tracks.is_null() {
+                return None;
+            }
+            let selected = (api.libvlc_video_get_track)(self.player);
+            let mut videos = std::slice::from_raw_parts(tracks, count as usize)
+                .iter()
+                .filter_map(|&track| track.as_ref())
+                .filter(|track| track.kind == VIDEO_TRACK);
+            let track = videos
+                .clone()
+                .find(|track| track.id == selected)
+                .or_else(|| videos.next());
+            let dimensions = track
+                .and_then(|track| track.video.as_ref())
+                .and_then(VideoTrack::display_dimensions);
+            (api.libvlc_media_tracks_release)(tracks, count);
+            dimensions
         }
     }
 
     fn apply_audio(&self) -> bool {
         unsafe {
-            (self.api.libvlc_audio_set_mute)(self.player, i32::from(self.muted));
-            (self.api.libvlc_audio_set_volume)(self.player, self.volume) == 0
+            (self.api.libvlc_audio_set_mute)(self.player, i32::from(self.preferences.muted));
+            (self.api.libvlc_audio_set_volume)(self.player, self.preferences.volume) == 0
+        }
+    }
+
+    fn restart(&self) -> bool {
+        unsafe {
+            (self.api.libvlc_media_player_stop)(self.player);
+            (self.api.libvlc_media_player_set_rate)(self.player, self.preferences.rate);
+            (self.api.libvlc_media_player_play)(self.player) == 0
         }
     }
 
@@ -420,23 +551,32 @@ impl Player {
         unsafe {
             match action {
                 Control::TogglePause => match (api.libvlc_media_player_get_state)(player) {
-                    5 | 6 => {
-                        (api.libvlc_media_player_stop)(player);
-                        (api.libvlc_media_player_play)(player);
-                        return true;
-                    }
+                    5 | 6 => return self.restart(),
                     3 | 4 => (api.libvlc_media_player_pause)(player),
                     _ => {}
                 },
-                Control::Seek(ms) => {
+                Control::Seek(ms) | Control::SeekBy(ms) => {
                     if (api.libvlc_media_player_is_seekable)(player) != 0 {
-                        (api.libvlc_media_player_set_time)(player, ms.clamp(0, self.end_ms));
+                        let target = if matches!(action, Control::SeekBy(_)) {
+                            (api.libvlc_media_player_get_time)(player)
+                                .max(0)
+                                .saturating_add(ms)
+                        } else {
+                            ms
+                        };
+                        (api.libvlc_media_player_set_time)(player, target.clamp(0, self.end_ms));
                     }
                 }
                 Control::Audio { volume, muted } => {
-                    self.volume = volume;
-                    self.muted = muted;
+                    self.preferences.volume = volume;
+                    self.preferences.muted = muted;
                     return !self.apply_audio();
+                }
+                Control::Loop(looping) => self.preferences.looping = looping,
+                Control::Rate(rate) => {
+                    if (api.libvlc_media_player_set_rate)(player, rate) == 0 {
+                        self.preferences.rate = rate;
+                    }
                 }
             }
         }
@@ -457,5 +597,26 @@ impl Drop for Player {
 pub fn report_failure(operation: &str, code: i32) {
     if crate::diagnostics::enabled() {
         eprintln!("KGen View playback: {operation} failed ({code})");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_size_accounts_for_sample_aspect_and_rotation() {
+        let mut track = VideoTrack {
+            width: 720,
+            height: 576,
+            sample_aspect_num: 16,
+            sample_aspect_den: 15,
+            _frame_rate_num: 0,
+            _frame_rate_den: 0,
+            orientation: 0,
+        };
+        assert_eq!(track.display_dimensions(), Some((768, 576)));
+        track.orientation = 6;
+        assert_eq!(track.display_dimensions(), Some((576, 768)));
     }
 }

@@ -80,7 +80,7 @@ use windows::{
 };
 
 use crate::{
-    catalog::FolderCatalog,
+    catalog::{FolderCatalog, MediaKind},
     commands as cmd,
     i18n::{Language, Text, tr},
     imaging::{DecodeRequest, ImageDocument, ImageError},

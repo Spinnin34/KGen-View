@@ -167,6 +167,7 @@ impl AppState {
         }
         self.set_zoom(ZoomMode::Fit);
         self.layout_video();
+        self.reveal_video_panel();
         unsafe {
             let _ = InvalidateRect(Some(self.hwnd), None, false);
         }

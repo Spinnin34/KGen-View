@@ -16,6 +16,24 @@ pub struct FolderCatalog {
     pub files: Arc<Vec<PathBuf>>,
     positions: Arc<HashMap<String, usize>>,
     pub index: Option<usize>,
+    kind: MediaKind,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MediaKind {
+    #[default]
+    Image,
+    Video,
+}
+
+impl MediaKind {
+    pub fn of(path: &Path) -> Self {
+        if is_video(path) {
+            Self::Video
+        } else {
+            Self::Image
+        }
+    }
 }
 
 impl FolderCatalog {
@@ -26,6 +44,11 @@ impl FolderCatalog {
         let Ok(read_dir) = fs::read_dir(folder) else {
             return Self::default();
         };
+        let kind = MediaKind::of(current);
+        let supported = match kind {
+            MediaKind::Image => is_supported,
+            MediaKind::Video => is_video,
+        };
         let mut entries: Vec<(PathBuf, String)> = Vec::new();
         for entry in read_dir {
             if should_cancel() {
@@ -33,7 +56,7 @@ impl FolderCatalog {
             }
             let Ok(entry) = entry else { continue };
             let path = entry.path();
-            if !is_supported(&path) && !is_video(&path) {
+            if !supported(&path) {
                 continue;
             }
             let Ok(file_type) = entry.file_type() else {
@@ -52,10 +75,10 @@ impl FolderCatalog {
             return Self::default();
         }
         let files: Vec<PathBuf> = entries.into_iter().map(|(path, _)| path).collect();
-        Self::from_files(files, Some(current))
+        Self::from_files(files, Some(current), kind)
     }
 
-    pub fn from_files(files: Vec<PathBuf>, current: Option<&Path>) -> Self {
+    pub fn from_files(files: Vec<PathBuf>, current: Option<&Path>, kind: MediaKind) -> Self {
         let positions: HashMap<_, _> = files
             .iter()
             .enumerate()
@@ -66,7 +89,20 @@ impl FolderCatalog {
             files: Arc::new(files),
             positions: Arc::new(positions),
             index,
+            kind,
         }
+    }
+
+    pub fn kind(&self) -> MediaKind {
+        self.kind
+    }
+
+    pub fn matches(&self, path: &Path, kind: MediaKind) -> bool {
+        self.kind == kind
+            && self
+                .files
+                .first()
+                .is_some_and(|entry| entry.parent() == path.parent())
     }
 
     pub fn contains(&self, path: &Path) -> bool {
@@ -80,7 +116,7 @@ impl FolderCatalog {
             .filter(|item| !same_path(item, path))
             .cloned()
             .collect();
-        *self = Self::from_files(files, None);
+        *self = Self::from_files(files, None, self.kind);
     }
 
     pub fn update_index(&mut self, current: &Path) {
@@ -212,6 +248,7 @@ mod tests {
                 .map(PathBuf::from)
                 .collect(),
             Some(Path::new("c.png")),
+            MediaKind::Image,
         );
         assert_eq!(catalog.adjacent_wrapped(1), Some(PathBuf::from("a.png")));
         let first = FolderCatalog {
@@ -223,8 +260,11 @@ mod tests {
 
     #[test]
     fn adjacent_wrapped_does_not_reload_single_image() {
-        let catalog =
-            FolderCatalog::from_files(vec![PathBuf::from("only.png")], Some(Path::new("only.png")));
+        let catalog = FolderCatalog::from_files(
+            vec![PathBuf::from("only.png")],
+            Some(Path::new("only.png")),
+            MediaKind::Image,
+        );
 
         assert!(catalog.adjacent_wrapped(1).is_none());
         assert!(catalog.adjacent_wrapped(-1).is_none());
@@ -235,8 +275,11 @@ mod tests {
         let paths = (0..100_000)
             .map(|i| PathBuf::from(format!("C:/photos/image{i:06}.png")))
             .collect();
-        let mut first =
-            FolderCatalog::from_files(paths, Some(Path::new("C:/photos/image099999.png")));
+        let mut first = FolderCatalog::from_files(
+            paths,
+            Some(Path::new("C:/photos/image099999.png")),
+            MediaKind::Image,
+        );
         let mut second = first.clone();
         second.update_index(Path::new("C:/PHOTOS/IMAGE050000.PNG"));
         assert_eq!(first.index, Some(99999));
@@ -248,5 +291,27 @@ mod tests {
             second.adjacent_wrapped(1),
             Some(PathBuf::from("C:/photos/image050001.png"))
         );
+    }
+
+    #[test]
+    fn mixed_folder_has_independent_image_and_video_navigation() {
+        let folder =
+            std::env::temp_dir().join(format!("kgen-mixed-catalog-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let names = ["01.JPG", "02.MP4", "03.png", "04.webm"];
+        for name in names {
+            fs::write(folder.join(name), []).unwrap();
+        }
+        let photos = FolderCatalog::scan_cancellable(&folder.join(names[0]), &|| false);
+        let videos = FolderCatalog::scan_cancellable(&folder.join(names[1]), &|| false);
+        for name in names {
+            fs::remove_file(folder.join(name)).unwrap();
+        }
+        fs::remove_dir(&folder).unwrap();
+        assert_eq!(photos.adjacent_wrapped(1), Some(folder.join(names[2])));
+        assert_eq!(videos.adjacent_wrapped(1), Some(folder.join(names[3])));
+        assert_eq!(photos.first(), Some(folder.join(names[0])));
+        assert_eq!(videos.first(), Some(folder.join(names[1])));
+        assert!(!photos.matches(&folder.join(names[1]), MediaKind::Video));
     }
 }

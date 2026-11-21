@@ -94,13 +94,7 @@ pub struct ChromeLayout {
 }
 
 impl ChromeLayout {
-    pub fn calculate(
-        hwnd: HWND,
-        client: RECT,
-        fullscreen: bool,
-        update_available: bool,
-        video: bool,
-    ) -> Self {
+    pub fn calculate(hwnd: HWND, client: RECT, fullscreen: bool, update_available: bool) -> Self {
         let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
         let scale = dpi as f32 / 96.0;
         let width = client.right.max(1) as f32;
@@ -172,19 +166,7 @@ impl ChromeLayout {
             let visible_items: Vec<_> = toolbar_items()
                 .iter()
                 .enumerate()
-                .filter(|(_, item)| {
-                    use crate::commands as cmd;
-                    (item.command != cmd::UPDATE || update_available)
-                        && (!video
-                            || matches!(
-                                item.command,
-                                cmd::OPEN
-                                    | cmd::PREVIOUS
-                                    | cmd::NEXT
-                                    | cmd::FULLSCREEN
-                                    | cmd::UPDATE
-                            ))
-                })
+                .filter(|(_, item)| item.command != crate::commands::UPDATE || update_available)
                 .collect();
             let mut cursor = 0;
             while cursor < visible_items.len() {

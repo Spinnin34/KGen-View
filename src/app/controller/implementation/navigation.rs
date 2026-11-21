@@ -94,8 +94,12 @@ impl AppState {
         if self.load_started.is_some() || !is_active_document {
             return;
         }
+        if self.video().is_some() {
+            self.render_video_panel();
+            return;
+        }
         self.update_status(None);
-        if self.prefetch_enabled && self.video().is_none() {
+        if self.prefetch_enabled {
             self.start_prefetch();
         }
     }
@@ -119,10 +123,15 @@ impl AppState {
         if self.keeps_window_size() {
             return;
         }
-        let Some(document) = &self.document else {
+        let video = self.video().is_some();
+        let dimensions = if video {
+            self.take_video_resize()
+        } else {
+            self.document.as_ref().map(ImageDocument::view_dimensions)
+        };
+        let Some((image_width, image_height)) = dimensions else {
             return;
         };
-        let (image_width, image_height) = document.view_dimensions();
         let monitor = unsafe { MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST) };
         let mut info = MONITORINFO {
             cbSize: size_of::<MONITORINFO>() as u32,
@@ -134,20 +143,27 @@ impl AppState {
         let max_w = info.rcWork.right - info.rcWork.left;
         let max_h = info.rcWork.bottom - info.rcWork.top;
         let chrome = self.chrome_layout();
+        let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(self.hwnd) }.max(96);
+        let adjust = |rect: &mut RECT| unsafe {
+            if video {
+                windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi(
+                    rect,
+                    WS_OVERLAPPEDWINDOW,
+                    false,
+                    WINDOW_EX_STYLE::default(),
+                    dpi,
+                )
+            } else {
+                AdjustWindowRectEx(rect, WS_OVERLAPPEDWINDOW, false, WINDOW_EX_STYLE::default())
+            }
+        };
         let mut frame_probe = RECT {
             left: 0,
             top: 0,
             right: 100,
             bottom: 100,
         };
-        let _ = unsafe {
-            AdjustWindowRectEx(
-                &mut frame_probe,
-                WS_OVERLAPPEDWINDOW,
-                false,
-                WINDOW_EX_STYLE::default(),
-            )
-        };
+        let _ = adjust(&mut frame_probe);
         let frame_w = frame_probe.right - frame_probe.left - 100;
         let frame_h = frame_probe.bottom - frame_probe.top - 100;
         let chrome_h = chrome.toolbar_height() + chrome.status_height();
@@ -158,20 +174,18 @@ impl AppState {
             .min(1.0);
         let desired_client_w = (image_width as f32 * scale).round() as i32;
         let desired_client_h = (image_height as f32 * scale).round() as i32 + chrome_h;
+        let min_client = if video {
+            ((336 * dpi / 96) as i32, (190 * dpi / 96) as i32)
+        } else {
+            (220, 160)
+        };
         let mut outer = RECT {
             left: 0,
             top: 0,
-            right: desired_client_w.max(220),
-            bottom: desired_client_h.max(160),
+            right: desired_client_w.max(min_client.0),
+            bottom: desired_client_h.max(min_client.1),
         };
-        let _ = unsafe {
-            AdjustWindowRectEx(
-                &mut outer,
-                WS_OVERLAPPEDWINDOW,
-                false,
-                WINDOW_EX_STYLE::default(),
-            )
-        };
+        let _ = adjust(&mut outer);
         let width = (outer.right - outer.left).min(max_w).max(220);
         let height = (outer.bottom - outer.top).min(max_h).max(150);
         let mut current = RECT::default();

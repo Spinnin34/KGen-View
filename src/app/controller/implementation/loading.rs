@@ -85,17 +85,17 @@ impl AppState {
         };
 
         let is_archive_member = self.active_archive.is_some();
-        let is_same_folder =
-            self.catalog.files.first().and_then(|known| known.parent()) == path.parent();
-        if !opening_archive
-            && !is_archive_member
-            && (self.catalog.files.is_empty() || !is_same_folder)
-        {
+        let kind = MediaKind::of(&path);
+        if !opening_archive && !is_archive_member && !self.catalog.matches(&path, kind) {
+            if self.catalog.kind() != kind {
+                self.catalog = FolderCatalog::default();
+                self.catalog_stamp = None;
+            }
             self.pending_catalog = Some((generation, path.clone()));
             self.catalog_loader
                 .submit(generation, path.clone(), self.hwnd);
         }
-        if !opening_archive && !is_archive_member && crate::catalog::is_video(&path) {
+        if !opening_archive && !is_archive_member && kind == MediaKind::Video {
             self.start_video(path);
             return;
         }
@@ -112,8 +112,7 @@ impl AppState {
             self.first_visible_cache_hit = true;
             self.first_visible = self.load_started.take();
             let mut catalog = self.catalog.clone();
-            let is_same_folder = catalog.files.first().and_then(|p| p.parent()) == path.parent();
-            if catalog.files.is_empty() || !is_same_folder {
+            if !catalog.matches(&path, MediaKind::Image) {
                 catalog = FolderCatalog::default();
             } else {
                 catalog.update_index(&path);
@@ -206,8 +205,7 @@ impl AppState {
                     self.catalog_stamp = None;
                     false
                 } else {
-                    let is_same_folder =
-                        self.catalog.files.first().and_then(|p| p.parent()) == path.parent();
+                    let is_same_folder = self.catalog.matches(&path, MediaKind::Image);
                     let needs_catalog = catalog.files.is_empty() && !is_same_folder;
                     if catalog.files.is_empty() || is_same_folder {
                         if is_same_folder {
@@ -294,8 +292,7 @@ impl AppState {
                     self.catalog = FolderCatalog::default();
                     self.catalog_stamp = None;
                 } else {
-                    let is_same_folder =
-                        self.catalog.files.first().and_then(|p| p.parent()) == path.parent();
+                    let is_same_folder = self.catalog.matches(&path, MediaKind::Image);
                     if catalog.files.is_empty() && is_same_folder {
                         self.catalog.update_index(&path);
                     } else {
@@ -353,9 +350,6 @@ impl AppState {
                     .as_ref()
                     .is_some_and(|member| !member.can_prefetch())
                 {
-                    return None;
-                }
-                if archive_member.is_none() && crate::catalog::is_video(&path) {
                     return None;
                 }
                 Some(DecodeTarget {
