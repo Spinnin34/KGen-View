@@ -25,7 +25,7 @@ impl EdgeLayout {
             .unwrap_or(client.bottom)
             .max(client.top + height * 3 / 5);
         let width = (client.right - client.left).max(0);
-        let side = client.right - ((104.0 * scale).round() as i32).min(width * 2 / 5);
+        let side = client.right - ((68.0 * scale).round() as i32).min(width * 2 / 5);
         Self {
             client,
             bottom,
@@ -50,7 +50,7 @@ impl EdgeLayout {
 
     pub fn progress(self) -> Option<(POINT, SIZE)> {
         let width = self.client.right - self.client.left;
-        let height = (3.0 * self.scale).round() as i32;
+        let height = (2.0 * self.scale).round() as i32;
         (width > 0 && self.client.bottom - self.client.top >= height).then_some((
             POINT {
                 x: self.client.left,
@@ -70,20 +70,15 @@ impl EdgeLayout {
         if height < 92 || width < 100 {
             return None;
         }
-        let above_dock = self.bottom - client.top;
-        let room = if above_dock >= (124.0 * self.scale).round() as i32 {
-            above_dock
-        } else {
-            height
-        };
+        let room = self.bottom - client.top;
         let scale = self
             .scale
-            .min(room as f32 / 240.0)
-            .min(width as f32 / 168.0);
-        let inset = (13.0 * scale).round() as i32;
+            .min(room as f32 / 158.0)
+            .min(width as f32 / 120.0);
+        let inset = (8.0 * scale).round() as i32;
         let size = SIZE {
-            cx: (64.0 * scale).round() as i32,
-            cy: (214.0 * scale).round() as i32,
+            cx: (44.0 * scale).round() as i32,
+            cy: (142.0 * scale).round() as i32,
         };
         let vertical_inset = inset.min((room - size.cy) / 2);
         let offset = POINT {
@@ -97,8 +92,13 @@ impl EdgeLayout {
             offset,
             size,
             scale,
-            track: PxRect::new(9.0 * scale, 42.0 * scale, 55.0 * scale, 169.0 * scale),
-            mute: PxRect::new(10.0 * scale, 178.0 * scale, 54.0 * scale, 208.0 * scale),
+            track: PxRect::new(
+                6.0 * scale,
+                (28.0 * scale).round(),
+                38.0 * scale,
+                (108.0 * scale).round(),
+            ),
+            mute: PxRect::new(6.0 * scale, 116.0 * scale, 38.0 * scale, 138.0 * scale),
         })
     }
 }
@@ -123,7 +123,7 @@ impl ProgressLine {
             self.hide();
             return Ok(());
         };
-        let played = (size.cx as f32 * fraction).round() as i32;
+        let played = Self::played_pixels(size, fraction);
         let frame = (pos, size, played);
         if self.layer.visible && self.previous == Some(frame) {
             return Ok(());
@@ -135,10 +135,7 @@ impl ProgressLine {
             }
             let brush = brush.as_ref().unwrap();
             let rect = PxRect::new(0.0, 0.0, size.cx as f32, size.cy as f32);
-            brush.SetColor(&D2D1_COLOR_F {
-                a: 0.53,
-                ..rgb(0x2e231d)
-            });
+            brush.SetColor(&D2D1_COLOR_F { a: 0.55, ..TRACK });
             target.FillRectangle(&rect.as_d2d(), brush);
             if played > 0 {
                 brush.SetColor(&ACCENT);
@@ -150,21 +147,27 @@ impl ProgressLine {
                     .as_d2d(),
                     brush,
                 );
-                brush.SetColor(&HOT_ACCENT);
-                target.FillRectangle(
-                    &PxRect {
-                        left: (played - 2 * size.cy).max(0) as f32,
-                        right: played as f32,
-                        ..rect
-                    }
-                    .as_d2d(),
-                    brush,
-                );
             }
             Ok(())
         })?;
         self.previous = Some(frame);
         Ok(())
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.layer.visible
+    }
+
+    pub fn position_changed(&self, status: PlaybackStatus) -> bool {
+        self.layer.visible
+            && self.previous.is_some_and(|(_, size, played)| {
+                progress(status)
+                    .is_none_or(|fraction| Self::played_pixels(size, fraction) != played)
+            })
+    }
+
+    fn played_pixels(size: SIZE, fraction: f32) -> i32 {
+        (size.cx as f32 * fraction).round() as i32
     }
 
     pub fn hide(&mut self) {
@@ -216,8 +219,12 @@ impl VolumeLayout {
     }
 
     pub fn value(self, y: i32) -> i32 {
-        let fraction =
-            ((self.track.bottom - y as f32) / (self.track.bottom - self.track.top)).clamp(0.0, 1.0);
+        let top = self.track.top.round() as i32;
+        let bottom = self.track.bottom.round() as i32;
+        if y == self.track_y(100).round() as i32 {
+            return 100;
+        }
+        let fraction = ((bottom - y) as f32 / (bottom - top) as f32).clamp(0.0, 1.0);
         (fraction * MAX_VOLUME as f32).round() as i32
     }
 
@@ -251,13 +258,13 @@ impl VolumePainter {
                 percent: text_format(
                     &factory,
                     w!("Consolas"),
-                    14.0 * scale,
+                    11.0 * scale,
                     DWRITE_TEXT_ALIGNMENT_CENTER,
                 )?,
                 icon: text_format(
                     &factory,
                     w!("Segoe MDL2 Assets"),
-                    16.0 * scale,
+                    14.0 * scale,
                     DWRITE_TEXT_ALIGNMENT_CENTER,
                 )?,
                 brush: unsafe { target.CreateSolidColorBrush(&INK, None)? },
@@ -266,10 +273,8 @@ impl VolumePainter {
         let painter = painter.as_ref().unwrap();
         let brush = &painter.brush;
         let fill = |rect: PxRect, radius: f32, color| unsafe {
-            if rect.bottom > rect.top {
-                brush.SetColor(&color);
-                target.FillRoundedRectangle(&rect.as_rounded(radius * scale), brush);
-            }
+            brush.SetColor(&color);
+            target.FillRoundedRectangle(&rect.as_rounded(radius * scale), brush);
         };
         let label = |text: &[u16], rect: PxRect, font: &IDWriteTextFormat, color| unsafe {
             brush.SetColor(&color);
@@ -282,104 +287,50 @@ impl VolumePainter {
                 DWRITE_MEASURING_MODE_NATURAL,
             );
         };
-        let panel = PxRect::new(
-            0.5,
-            0.5,
-            layout.size.cx as f32 - 0.5,
-            layout.size.cy as f32 - 0.5,
-        );
-        fill(
-            panel,
-            15.0,
-            D2D1_COLOR_F {
-                a: 0.95,
-                ..rgb(0x1b1410)
-            },
-        );
-        unsafe {
-            brush.SetColor(&TRACK);
-            target.DrawRoundedRectangle(&panel.as_rounded(15.0 * scale), brush, 1.0, None);
-        }
-        let boosted = preferences.volume > 100;
-        let amount_color = if preferences.muted {
-            MUTED
-        } else if boosted {
-            HOT_ACCENT
-        } else {
-            INK
-        };
+        let panel = PxRect::new(0.0, 0.0, layout.size.cx as f32, layout.size.cy as f32);
+        fill(panel, 5.0, PANEL);
+        let amount_color = if preferences.muted { MUTED } else { INK };
         let volume: Vec<u16> = format!("{}%", preferences.volume).encode_utf16().collect();
         label(
             &volume,
-            PxRect::new(0.0, 7.0 * scale, panel.right, 35.0 * scale),
+            PxRect::new(0.0, 4.0 * scale, panel.right, 22.0 * scale),
             &painter.percent,
             amount_color,
         );
-        let center = layout.size.cx as f32 * 0.5;
-        let track = PxRect::new(
-            center - 3.0 * scale,
+        let center = panel.right * 0.5;
+        let rail = PxRect::new(
+            center - scale,
             layout.track.top,
-            center + 3.0 * scale,
+            center + scale,
             layout.track.bottom,
         );
         let knob = layout.track_y(preferences.volume);
         let nominal = layout.track_y(100);
-        fill(track, 3.0, TRACK);
-        let fill_color = if preferences.muted {
-            rgb(0x877367)
-        } else {
-            ACCENT
-        };
-        fill(
-            PxRect {
-                top: knob.max(nominal),
-                ..track
-            },
-            3.0,
-            fill_color,
-        );
-        if boosted {
-            fill(
-                PxRect {
-                    top: knob,
-                    bottom: nominal,
-                    ..track
-                },
-                2.0,
-                if preferences.muted {
-                    fill_color
-                } else {
-                    HOT_ACCENT
-                },
+        let active = dragging || hover == Some(VolumeHit::Track);
+        let fill_color = if preferences.muted { MUTED } else { ACCENT };
+        unsafe {
+            brush.SetColor(&TRACK);
+            target.FillRectangle(&rail.as_d2d(), brush);
+            brush.SetColor(&MUTED);
+            target.FillRectangle(
+                &PxRect::new(
+                    center + 4.0 * scale,
+                    nominal - 0.5 * scale,
+                    center + 8.0 * scale,
+                    nominal + 0.5 * scale,
+                )
+                .as_d2d(),
+                brush,
             );
+            brush.SetColor(&fill_color);
+            if knob < rail.bottom {
+                target.FillRectangle(&PxRect { top: knob, ..rail }.as_d2d(), brush);
+            }
+            let radius = if active { 4.0 } else { 3.25 } * scale;
+            target.FillEllipse(&dot(center, knob, radius), brush);
         }
-        fill(
-            PxRect::new(
-                center + 7.0 * scale,
-                nominal - scale,
-                center + 13.0 * scale,
-                nominal + scale,
-            ),
-            1.0,
-            MUTED,
-        );
-        let half_width = if dragging || hover == Some(VolumeHit::Track) {
-            8.0
-        } else {
-            6.0
-        } * scale;
-        fill(
-            PxRect::new(
-                center - half_width,
-                knob - 2.5 * scale,
-                center + half_width,
-                knob + 2.5 * scale,
-            ),
-            2.5,
-            if preferences.muted { MUTED } else { HOT_ACCENT },
-        );
         if hover == Some(VolumeHit::Mute) {
-            fill(layout.mute, 8.0, rgb(0x4b2d1e));
+            fill(layout.mute, 4.0, HOVER);
         }
         label(
             &[speaker_glyph(preferences)],
@@ -427,7 +378,9 @@ mod tests {
         assert!(volume.offset.y >= client.top && volume.offset.y + volume.size.cy <= client.bottom);
         assert_eq!(volume.value(-100), MAX_VOLUME);
         assert_eq!(volume.value(500), 0);
-        assert!((volume.value(volume.track_y(100).round() as i32) - 100).abs() <= 1);
+        assert_eq!(volume.value(volume.track_y(100).round() as i32), 100);
+        assert_eq!(volume.value(volume.track.top as i32), MAX_VOLUME);
+        assert_eq!(volume.value(volume.track.bottom as i32), 0);
     }
 
     #[test]

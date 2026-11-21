@@ -3,15 +3,14 @@ use windows::{
         Foundation::{POINT, RECT, SIZE},
         Graphics::{
             Direct2D::{
-                Common::D2D1_COLOR_F, D2D1_DRAW_TEXT_OPTIONS_CLIP, ID2D1DCRenderTarget,
-                ID2D1SolidColorBrush,
+                Common::D2D1_COLOR_F, D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_ELLIPSE,
+                ID2D1DCRenderTarget, ID2D1SolidColorBrush,
             },
             DirectWrite::{
                 DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL,
                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT,
-                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING,
-                DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory,
+                DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory,
                 IDWriteFactory, IDWriteTextFormat,
             },
         },
@@ -33,9 +32,14 @@ pub use layer::{Layer, LayerKind, WM_PANEL_INPUT, WM_VOLUME_INPUT};
 
 const ACCENT: D2D1_COLOR_F = rgb(0xff8d42);
 const HOT_ACCENT: D2D1_COLOR_F = rgb(0xffb277);
-const INK: D2D1_COLOR_F = rgb(0xfff4eb);
-const MUTED: D2D1_COLOR_F = rgb(0xc9afa0);
-const TRACK: D2D1_COLOR_F = rgb(0x503b30);
+const INK: D2D1_COLOR_F = rgb(0xf4f4f4);
+const MUTED: D2D1_COLOR_F = rgb(0xb4b4b8);
+const TRACK: D2D1_COLOR_F = rgb(0x545459);
+const PANEL: D2D1_COLOR_F = D2D1_COLOR_F {
+    a: 0.94,
+    ..rgb(0x19191b)
+};
+const HOVER: D2D1_COLOR_F = rgb(0x363639);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -64,8 +68,7 @@ pub struct PanelLayout {
     scale: f32,
     buttons: Vec<(Action, PxRect)>,
     seek: PxRect,
-    time: PxRect,
-    hint: PxRect,
+    caption: PxRect,
 }
 
 impl PanelLayout {
@@ -75,41 +78,36 @@ impl PanelLayout {
         if width < 100 || height < 60 {
             return None;
         }
-        let scale = dpi_scale.min(height as f32 / 112.0);
-        let inset = if width as f32 >= 350.0 * scale {
-            14.0 * scale
-        } else {
-            6.0 * scale
-        };
+        let scale = dpi_scale
+            .min(height as f32 / 70.0)
+            .min(width as f32 / 132.0);
+        let inset = 8.0 * scale;
         let size = SIZE {
-            cx: (width as f32 - 2.0 * inset).min(916.0 * scale).round() as i32,
-            cy: (94.0 * scale).round() as i32,
+            cx: (width as f32 - 2.0 * inset).min(704.0 * scale).round() as i32,
+            cy: (54.0 * scale).round() as i32,
         };
         let width = size.cx as f32;
         let offset = POINT {
             x: client.left + (client.right - client.left - size.cx) / 2,
-            y: client.bottom - size.cy - (inset.round() as i32),
+            y: client.bottom - size.cy - inset.round() as i32,
         };
-        let pad = if width >= 270.0 * scale { 14.0 } else { 8.0 } * scale;
+        let pad = 6.0 * scale;
         let right = width - pad;
-        let seek = PxRect::new(pad, 47.0 * scale, right, 73.0 * scale);
-        let time = PxRect::new(pad, 71.0 * scale, right, 91.0 * scale);
-        let hint_margin = (62.0 * scale).min((right - pad) * 0.25);
-        let hint = PxRect::new(
-            pad + hint_margin,
-            time.top,
-            right - hint_margin,
-            time.bottom,
+        let seek = PxRect::new(
+            12.0 * scale,
+            35.0 * scale,
+            width - 12.0 * scale,
+            size.cy as f32,
         );
         let primary = [Action::Previous, Action::Play, Action::Next];
         let mut secondary = vec![Action::Fullscreen, Action::More];
-        if width >= 246.0 * scale {
+        if width >= 230.0 * scale {
             secondary.splice(0..0, [Action::Volume, Action::Loop]);
         }
-        if width >= 366.0 * scale {
+        if width >= 360.0 * scale {
             secondary.insert(2, Action::Rate);
         }
-        if width >= 444.0 * scale {
+        if width >= 452.0 * scale {
             secondary.insert(0, Action::Open);
         }
         if update {
@@ -120,16 +118,18 @@ impl PanelLayout {
         } else {
             0.0
         };
-        let button_width = (38.0 * scale)
+        let button_width = (31.0 * scale)
             .min((right - pad - rate_extra) / (primary.len() + secondary.len()) as f32);
-        let row = |x, width| PxRect::new(x, 7.0 * scale, x + width, 45.0 * scale);
+        let row = |x, width| PxRect::new(x, 4.0 * scale, x + width, 35.0 * scale);
         let mut x = pad;
         let mut buttons = Vec::new();
         for action in primary {
             buttons.push((action, row(x, button_width)));
             x += button_width;
         }
+        let left = x;
         x = right - button_width * secondary.len() as f32 - rate_extra;
+        let caption = row(left, x - left).inset(2.0 * scale);
         for action in secondary {
             let width = button_width
                 + if action == Action::Rate {
@@ -146,13 +146,12 @@ impl PanelLayout {
             scale,
             buttons,
             seek,
-            time,
-            hint,
+            caption,
         })
     }
 
     pub fn hit(&self, point: POINT) -> Option<Hit> {
-        if self.seek.contains(point) {
+        if point.y as f32 >= self.seek.top && self.contains(point) {
             return Some(Hit::Seek);
         }
         self.buttons
@@ -163,6 +162,19 @@ impl PanelLayout {
     pub fn fraction(&self, x: i32) -> f32 {
         let rect = self.seek;
         ((x as f32 - rect.left) / (rect.right - rect.left).max(1.0)).clamp(0.0, 1.0)
+    }
+
+    pub fn timeline_key(&self, status: PlaybackStatus, drag: Option<f32>) -> (i32, i64) {
+        let elapsed = timeline_elapsed(status, drag);
+        (
+            (self.playhead_x(status, drag) * 4.0).round() as i32,
+            elapsed / 1000,
+        )
+    }
+
+    fn playhead_x(&self, status: PlaybackStatus, drag: Option<f32>) -> f32 {
+        let fraction = drag.or_else(|| progress(status)).unwrap_or(0.0);
+        self.seek.left + (self.seek.right - self.seek.left) * fraction
     }
 
     pub fn contains(&self, point: POINT) -> bool {
@@ -313,9 +325,7 @@ pub struct Painter {
     scale: f32,
     icons: IDWriteTextFormat,
     time: IDWriteTextFormat,
-    remaining: IDWriteTextFormat,
-    hint: IDWriteTextFormat,
-    rate: IDWriteTextFormat,
+    label: IDWriteTextFormat,
     brush: ID2D1SolidColorBrush,
 }
 
@@ -357,11 +367,9 @@ impl Painter {
             let format = |name, size, align| text_format(&factory, name, size * scale, align);
             Ok(Self {
                 scale,
-                icons: format(w!("Segoe MDL2 Assets"), 16.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
-                time: format(w!("Consolas"), 12.0, DWRITE_TEXT_ALIGNMENT_LEADING)?,
-                remaining: format(w!("Consolas"), 12.0, DWRITE_TEXT_ALIGNMENT_TRAILING)?,
-                hint: format(w!("Segoe UI"), 12.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
-                rate: format(w!("Segoe UI"), 12.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
+                icons: format(w!("Segoe MDL2 Assets"), 14.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
+                time: format(w!("Consolas"), 11.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
+                label: format(w!("Segoe UI"), 11.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 brush: target.CreateSolidColorBrush(&rgb(0xf1f1f6), None)?,
             })
         }
@@ -385,24 +393,13 @@ impl Painter {
     }
 
     unsafe fn scene(&self, target: &ID2D1DCRenderTarget, layout: &PanelLayout, model: &Model<'_>) {
-        const DISABLED: D2D1_COLOR_F = rgb(0x8a7367);
+        const DISABLED: D2D1_COLOR_F = rgb(0x77777b);
         let scale = layout.scale;
-        let panel = PxRect::new(
-            0.5,
-            0.5,
-            layout.size.cx as f32 - 0.5,
-            layout.size.cy as f32 - 0.5,
-        );
-        let radius = 13.0 * scale;
+        let panel = PxRect::new(0.0, 0.0, layout.size.cx as f32, layout.size.cy as f32);
         let brush = &self.brush;
         unsafe {
-            brush.SetColor(&D2D1_COLOR_F {
-                a: 0.94,
-                ..rgb(0x1b1410)
-            });
-            target.FillRoundedRectangle(&panel.as_rounded(radius), brush);
-            brush.SetColor(&D2D1_COLOR_F { a: 0.85, ..TRACK });
-            target.DrawRoundedRectangle(&panel.as_rounded(radius), brush, 1.0, None);
+            brush.SetColor(&PANEL);
+            target.FillRoundedRectangle(&panel.as_rounded(5.0 * scale), brush);
         }
         let draw_chars = |chars: &[u16], area: PxRect, format: &IDWriteTextFormat, color| unsafe {
             brush.SetColor(color);
@@ -423,83 +420,59 @@ impl Painter {
                 color,
             )
         };
-        let preview = model
-            .drag
-            .unwrap_or_else(|| progress(model.status).unwrap_or(0.0));
         if let Some(message) = model.message() {
-            label(message, layout.time, &self.time, &INK);
+            label(message, layout.seek, &self.label, &INK);
         } else {
-            let elapsed = if model.drag.is_some() {
-                (model.status.duration_ms as f32 * preview) as i64
-            } else {
-                model.status.elapsed_ms
-            };
-            let elapsed = if model.status.duration_ms > 0 {
-                elapsed.clamp(0, model.status.duration_ms)
-            } else {
-                elapsed.max(0)
-            };
-            label(&time_label(elapsed), layout.time, &self.time, &INK);
-            if model.status.duration_ms > 0 {
-                let remaining = time_label(model.status.duration_ms.saturating_sub(elapsed).max(0));
-                label(
-                    &format!("−{remaining}"),
-                    layout.time,
-                    &self.remaining,
-                    &MUTED,
-                );
-            }
-            let selected = match model.hover {
+            let caption = match model.hover {
                 Some(Hit::Button(button)) => Some(model.label(button)),
                 _ => model.focus.map(|button| model.label(button)),
             };
-            if let Some(text) = selected {
-                label(text, layout.hint, &self.hint, &MUTED);
+            let caption_width = layout.caption.right - layout.caption.left;
+            if let Some(caption) = caption
+                .filter(|text| caption_width >= (text.chars().count() as f32 * 5.4 + 6.0) * scale)
+            {
+                label(caption, layout.caption, &self.label, &INK);
+            } else if caption_width >= 44.0 * scale {
+                let elapsed = time_label(timeline_elapsed(model.status, model.drag));
+                let duration = time_label(model.status.duration_ms.max(0));
+                let time_width = (elapsed.len() + 3 + duration.len()) as f32 * 6.1 * scale;
+                let text = if model.status.duration_ms > 0 && caption_width >= time_width {
+                    format!("{elapsed} / {duration}")
+                } else {
+                    elapsed
+                };
+                label(&text, layout.caption, &self.time, &MUTED);
+            }
+            let seek = layout.seek;
+            let y = (seek.top + seek.bottom) * 0.5;
+            let x = layout.playhead_x(model.status, model.drag);
+            let active =
+                model.status.seekable && (model.hover == Some(Hit::Seek) || model.drag.is_some());
+            let half = if active { 1.25 } else { 0.9 } * scale;
+            let rail = PxRect::new(seek.left, y - half, seek.right, y + half);
+            unsafe {
+                brush.SetColor(&TRACK);
+                target.FillRectangle(&rail.as_d2d(), brush);
+                brush.SetColor(&ACCENT);
+                if x > rail.left {
+                    target.FillRectangle(&PxRect { right: x, ..rail }.as_d2d(), brush);
+                }
+                if active {
+                    target.FillEllipse(&dot(x, y, 3.5 * scale), brush);
+                }
             }
         }
-        let track = |rect: PxRect, fraction: f32, thumb: bool| unsafe {
-            let y = (rect.top + rect.bottom) * 0.5;
-            let thickness = 3.0 * scale;
-            let line = PxRect::new(
-                rect.left,
-                y - thickness * 0.5,
-                rect.right,
-                y + thickness * 0.5,
-            );
-            let x = line.left + (line.right - line.left) * fraction.clamp(0.0, 1.0);
-            brush.SetColor(&TRACK);
-            target.FillRoundedRectangle(&line.as_rounded(thickness * 0.5), brush);
-            if x > line.left {
-                brush.SetColor(&ACCENT);
-                target.FillRoundedRectangle(
-                    &PxRect { right: x, ..line }.as_rounded(thickness * 0.5),
-                    brush,
-                );
-            }
-            if thumb {
-                brush.SetColor(&ACCENT);
-                let thumb = PxRect::new(
-                    x - 2.0 * scale,
-                    y - 7.0 * scale,
-                    x + 2.0 * scale,
-                    y + 7.0 * scale,
-                );
-                brush.SetColor(&HOT_ACCENT);
-                target.FillRoundedRectangle(&thumb.as_rounded(2.0 * scale), brush);
-            }
-        };
-        track(layout.seek, preview, model.status.seekable);
         for (button, rect) in &layout.buttons {
-            let rect = rect.inset(2.0 * scale);
+            let rect = rect.inset(scale);
             let enabled = model.enabled(*button);
             let highlighted =
                 model.hover == Some(Hit::Button(*button)) || model.focus == Some(*button);
-            let accent = enabled && *button == Action::Play;
             let color = if !enabled {
                 DISABLED
-            } else if accent {
-                rgb(0x241b18)
-            } else if (*button == Action::Loop && model.preferences.looping)
+            } else if *button == Action::Play && highlighted {
+                HOT_ACCENT
+            } else if *button == Action::Play
+                || (*button == Action::Loop && model.preferences.looping)
                 || (*button == Action::Volume && model.volume_open)
                 || *button == Action::Update
             {
@@ -508,24 +481,20 @@ impl Painter {
                 INK
             };
             unsafe {
-                if accent || highlighted {
-                    brush.SetColor(&if accent {
-                        if highlighted { HOT_ACCENT } else { ACCENT }
-                    } else {
-                        rgb(0x4b2d1e)
-                    });
-                    target.FillRoundedRectangle(&rect.as_rounded(8.0 * scale), brush);
+                if highlighted && enabled {
+                    brush.SetColor(&HOVER);
+                    target.FillRoundedRectangle(&rect.as_rounded(4.0 * scale), brush);
                 }
                 if model.focus == Some(*button) {
                     brush.SetColor(&INK);
-                    target.DrawRoundedRectangle(&rect.as_rounded(8.0 * scale), brush, 1.0, None);
+                    target.DrawRoundedRectangle(&rect.as_rounded(4.0 * scale), brush, 1.0, None);
                 }
             }
             if *button == Action::Rate {
                 label(
                     &rate_label(model.preferences.rate, model.language),
                     rect,
-                    &self.rate,
+                    &self.label,
                     &color,
                 );
             } else {
@@ -533,6 +502,31 @@ impl Painter {
             }
         }
     }
+}
+
+fn dot(x: f32, y: f32, radius: f32) -> D2D1_ELLIPSE {
+    let mut ellipse = D2D1_ELLIPSE {
+        radiusX: radius,
+        radiusY: radius,
+        ..Default::default()
+    };
+    ellipse.point.X = x;
+    ellipse.point.Y = y;
+    ellipse
+}
+
+fn timeline_elapsed(status: PlaybackStatus, drag: Option<f32>) -> i64 {
+    let elapsed = drag.map_or(status.elapsed_ms, |fraction| {
+        (status.duration_ms as f64 * f64::from(fraction)).round() as i64
+    });
+    elapsed.clamp(
+        0,
+        if status.duration_ms > 0 {
+            status.duration_ms
+        } else {
+            i64::MAX
+        },
+    )
 }
 
 fn progress(status: PlaybackStatus) -> Option<f32> {

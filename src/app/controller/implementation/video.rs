@@ -18,9 +18,14 @@ use windows::Win32::UI::{
     },
 };
 
+mod clock;
+use clock::Playhead;
+
 const SS_BLACKRECT: WINDOW_STYLE = WINDOW_STYLE(4);
 pub(super) const TIMER_VIDEO_PANEL: usize = 9;
-const POINTER_INTERVAL_MS: u32 = 70;
+const ACTIVE_INTERVAL_MS: u32 = 15;
+const PROGRESS_INTERVAL_MS: u32 = 33;
+const IDLE_INTERVAL_MS: u32 = 70;
 const HIDE_AFTER: std::time::Duration = std::time::Duration::from_millis(2400);
 
 pub(in crate::app::controller) struct VideoView {
@@ -29,6 +34,7 @@ pub(in crate::app::controller) struct VideoView {
     active: bool,
     pub(super) closing: bool,
     status: PlaybackStatus,
+    playhead: Playhead,
     started: Option<Instant>,
     resize_pending: bool,
     preferences: Preferences,
@@ -51,6 +57,8 @@ struct VideoPanel {
     pressed: Option<Hit>,
     drag: Option<f32>,
     menu_open: bool,
+    timer_interval: u32,
+    timeline_key: Option<(i32, i64)>,
 }
 
 impl VideoPanel {
@@ -70,6 +78,28 @@ impl VideoPanel {
             pressed: None,
             drag: None,
             menu_open: false,
+            timer_interval: 0,
+            timeline_key: None,
+        }
+    }
+
+    fn set_timer(&mut self, hwnd: HWND, interval: u32) {
+        if self.timer_interval != interval
+            && unsafe { SetTimer(Some(hwnd), TIMER_VIDEO_PANEL, interval, None) } != 0
+        {
+            self.timer_interval = interval;
+        }
+    }
+
+    fn timeline_changed(&self, status: PlaybackStatus) -> bool {
+        if self.layer.visible {
+            self.layout.as_ref().is_some_and(|layout| {
+                self.timeline_key != Some(layout.timeline_key(status, self.drag))
+            })
+        } else {
+            self.progress
+                .as_ref()
+                .is_some_and(|progress| progress.position_changed(status))
         }
     }
 
@@ -237,11 +267,21 @@ impl VideoView {
             active: false,
             closing: false,
             status: PlaybackStatus::new(Phase::Opening),
+            playhead: Playhead::new(Instant::now()),
             started: None,
             resize_pending: false,
             preferences: Preferences::default(),
             notice: None,
         })
+    }
+
+    fn display_status(&self, now: Instant) -> PlaybackStatus {
+        PlaybackStatus {
+            elapsed_ms: self
+                .playhead
+                .position(self.status, self.preferences.rate, now),
+            ..self.status
+        }
     }
 
     fn failed(&self) -> bool {
@@ -321,16 +361,10 @@ impl AppState {
         } else {
             Phase::Failed
         });
+        view.playhead = Playhead::new(Instant::now());
         if let Some(panel) = &mut view.panel {
             panel.clear_input();
-            unsafe {
-                SetTimer(
-                    Some(self.hwnd),
-                    TIMER_VIDEO_PANEL,
-                    POINTER_INTERVAL_MS,
-                    None,
-                );
-            }
+            panel.set_timer(self.hwnd, IDLE_INTERVAL_MS);
         }
         self.layout_video();
         let view = self.video.as_deref().unwrap();
@@ -351,6 +385,8 @@ impl AppState {
                 panel.painter = None;
                 panel.layout = None;
                 panel.edges = None;
+                panel.timeline_key = None;
+                panel.timer_interval = 0;
                 if let Some(progress) = &mut panel.progress {
                     progress.reset();
                 }
@@ -384,6 +420,9 @@ impl AppState {
         };
         if !view.closing {
             view.closing = true;
+            unsafe {
+                let _ = KillTimer(Some(self.hwnd), TIMER_VIDEO_PANEL);
+            }
             if let Some(panel) = &mut view.panel {
                 panel.layer.hide();
                 if let Some(progress) = &mut panel.progress {
@@ -465,10 +504,23 @@ impl AppState {
         }
         let new_size = status.dimensions.is_some() && view.status.dimensions.is_none();
         let was_failed = view.failed();
+        let now = Instant::now();
+        let state_changed = view.status
+            != PlaybackStatus {
+                elapsed_ms: view.status.elapsed_ms,
+                ..status
+            };
+        view.playhead
+            .sample(view.status, status, view.preferences.rate, now);
         view.status = status;
         if was_failed != view.failed() {
             self.layout_video();
-        } else {
+        } else if state_changed
+            || view
+                .panel
+                .as_ref()
+                .is_some_and(|panel| panel.timeline_changed(view.display_status(now)))
+        {
             self.render_video_panel();
         }
         if new_size {
@@ -503,16 +555,17 @@ impl AppState {
         fullscreen: bool,
         can_navigate: bool,
         update_busy: bool,
+        now: Instant,
     ) -> Model<'a> {
         Model {
-            status: view.status,
+            status: view.display_status(now),
             preferences: view.preferences,
             language,
             fullscreen,
             volume_open: panel
                 .volume
                 .as_ref()
-                .is_some_and(|volume| volume.wants_visible(Instant::now())),
+                .is_some_and(|volume| volume.wants_visible(now)),
             can_navigate,
             update_busy,
             hover: panel.hover,
@@ -534,6 +587,7 @@ impl AppState {
             && unsafe { IsWindowVisible(self.hwnd).as_bool() && !IsIconic(self.hwnd).as_bool() };
         let foreground = allowed && unsafe { GetForegroundWindow() == self.hwnd };
         let now = Instant::now();
+        let status = view.display_status(now);
         let show = foreground && panel.wants_visible(view.controls_pinned(), now);
         if show && let Some(layout) = &panel.layout {
             let model = Self::video_model(
@@ -543,6 +597,7 @@ impl AppState {
                 self.fullscreen,
                 self.catalog.files.len() > 1,
                 self.update_download_busy,
+                now,
             );
             let mut origin = layout.offset;
             unsafe {
@@ -554,6 +609,8 @@ impl AppState {
             if let Err(error) = result {
                 report_failure("draw floating controls", error.code().0);
                 panel.layer.hide();
+            } else {
+                panel.timeline_key = Some(layout.timeline_key(model.status, model.drag));
             }
         } else {
             panel.layer.hide();
@@ -574,13 +631,33 @@ impl AppState {
                 unsafe {
                     let _ = ClientToScreen(self.hwnd, &mut origin);
                 }
-                if let Err(error) = progress.draw(origin, size, view.status) {
+                if let Err(error) = progress.draw(origin, size, status) {
                     report_failure("draw collapsed progress", error.code().0);
                     progress.hide();
                 }
             } else {
                 progress.hide();
             }
+        }
+        let interactive = panel.layer.visible
+            || panel
+                .volume
+                .as_ref()
+                .is_some_and(|volume| volume.layer.visible);
+        let interval = if interactive {
+            ACTIVE_INTERVAL_MS
+        } else if status.phase == Phase::Playing
+            && panel
+                .progress
+                .as_ref()
+                .is_some_and(ProgressLine::is_visible)
+        {
+            PROGRESS_INTERVAL_MS
+        } else {
+            IDLE_INTERVAL_MS
+        };
+        if !view.closing {
+            panel.set_timer(self.hwnd, interval);
         }
         view.panel = Some(panel);
     }
@@ -594,6 +671,8 @@ impl AppState {
             return;
         };
         let pinned = view.controls_pinned();
+        let now = Instant::now();
+        let status = view.display_status(now);
         let Some(panel) = &mut view.panel else {
             return;
         };
@@ -605,7 +684,7 @@ impl AppState {
                     .as_ref()
                     .is_some_and(|volume| volume.layer.visible);
             panel.clear_input();
-            if visible {
+            if visible || panel.timeline_changed(status) {
                 self.render_video_panel();
             }
             return;
@@ -618,7 +697,6 @@ impl AppState {
         unsafe {
             let _ = ScreenToClient(self.hwnd, &mut cursor);
         }
-        let now = Instant::now();
         let side_layout = panel.volume.as_ref().and_then(|volume| volume.layout);
         let bottom_local = panel.layout.as_ref().map(|layout| POINT {
             x: cursor.x - layout.offset.x,
@@ -670,7 +748,8 @@ impl AppState {
         }
         let mut redraw = (panel.wants_visible(pinned, now) && panel.layout.is_some())
             != panel.layer.visible
-            || before != (panel.hover, panel.drag, panel.focus);
+            || before != (panel.hover, panel.drag, panel.focus)
+            || panel.timeline_changed(status);
         let mut set_volume = None;
         if let Some(volume) = &mut panel.volume
             && let Some(layout) = side_layout
@@ -763,9 +842,10 @@ impl AppState {
         if message != WM_CAPTURECHANGED {
             panel.reveal.pointer(true, true, Instant::now());
         }
-        let duration_ms = view.status.duration_ms;
         if let Some(fraction) = seek {
-            self.send_video_control(Control::Seek((duration_ms as f32 * fraction) as i64));
+            let position = (view.status.duration_ms as f64 * f64::from(fraction)).round() as i64;
+            view.playhead.seek(position, Instant::now());
+            self.send_video_control(Control::Seek(position));
         }
         if let Some(action) = click {
             self.video_action(action);
@@ -785,6 +865,7 @@ impl AppState {
                 self.fullscreen,
                 self.catalog.files.len() > 1,
                 self.update_download_busy,
+                Instant::now(),
             );
             if let Some(layout) = &panel.layout {
                 panel.focus = layout.focus(panel.focus, reverse, &model);
@@ -948,6 +1029,8 @@ impl AppState {
 
     fn video_rate(&mut self, rate: f32) {
         if let Some(view) = self.video.as_deref_mut().filter(|view| view.active) {
+            view.playhead
+                .change_rate(view.status, view.preferences.rate, Instant::now());
             view.preferences.rate = rate;
             self.send_video_control(Control::Rate(rate));
             self.reveal_video_panel();
