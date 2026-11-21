@@ -185,6 +185,7 @@ struct BitmapTile {
 
 enum PendingAction {
     Load(PathBuf),
+    Install(updater::VerifiedInstaller),
     Close,
 }
 
@@ -230,6 +231,7 @@ struct AppState {
     update_events: Arc<Mailbox<UpdateEvent>>,
     update_available: Option<UpdateInfo>,
     update_download_busy: bool,
+    install_on_exit: Option<updater::InstallOnExit>,
     chrome: Chrome,
     status_model: StatusModel,
     menu: Option<ThemedMenu>,

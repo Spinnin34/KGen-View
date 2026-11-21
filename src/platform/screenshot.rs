@@ -337,6 +337,22 @@ unsafe extern "system" fn host_window_proc(
             }
             LRESULT(0)
         }
+        windows::Win32::UI::WindowsAndMessaging::WM_ENDSESSION
+            if wparam.0 != 0
+                && lparam.0
+                    & windows::Win32::UI::WindowsAndMessaging::ENDSESSION_CLOSEAPP as isize
+                    != 0 =>
+        {
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    Some(hwnd),
+                    WM_CLOSE,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            }
+            LRESULT(0)
+        }
         WM_CLOSE => {
             if !state.is_null() && unsafe { (*state).hotkey_registered } {
                 unsafe {

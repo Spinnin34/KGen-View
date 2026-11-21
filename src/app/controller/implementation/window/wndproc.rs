@@ -1,10 +1,12 @@
 use super::super::video::TIMER_VIDEO_PANEL;
 use super::*;
 use crate::platform::playback::{WM_PLAYBACK, WM_PLAYBACK_CLOSED};
-use crate::ui::video::{WM_PANEL_INPUT, WM_VOLUME_INPUT};
+use crate::ui::video::{WM_PANEL_INPUT, WM_VIDEO_MENU_INPUT, WM_VOLUME_INPUT};
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{VK_DOWN, VK_RETURN, VK_TAB, VK_UP},
-    WindowsAndMessaging::{WM_ACTIVATE, WM_MOVE},
+    WindowsAndMessaging::{
+        ENDSESSION_CLOSEAPP, WM_ACTIVATE, WM_ENDSESSION, WM_MOVE, WM_QUERYENDSESSION,
+    },
 };
 
 pub(super) unsafe extern "system" fn window_proc(
@@ -326,6 +328,10 @@ pub(super) unsafe extern "system" fn window_proc(
             state.video_input(wparam.0 as u32, point_from_lparam(lparam));
             LRESULT(0)
         }
+        WM_VIDEO_MENU_INPUT => {
+            state.video_menu_input(wparam.0 as u32, point_from_lparam(lparam));
+            LRESULT(0)
+        }
         WM_VOLUME_INPUT => {
             state.video_volume_input(wparam.0 as u32, point_from_lparam(lparam));
             LRESULT(0)
@@ -454,6 +460,17 @@ pub(super) unsafe extern "system" fn window_proc(
             }
             LRESULT(0)
         }
+        WM_QUERYENDSESSION if lparam.0 & ENDSESSION_CLOSEAPP as isize != 0 => {
+            let can_close =
+                !state.file_busy && state.document.as_ref().is_none_or(|doc| !doc.dirty);
+            LRESULT(isize::from(can_close))
+        }
+        WM_ENDSESSION if lparam.0 & ENDSESSION_CLOSEAPP as isize != 0 => {
+            if wparam.0 != 0 {
+                state.perform_action(PendingAction::Close);
+            }
+            LRESULT(0)
+        }
         WM_CLOSE => {
             state.request_leave(PendingAction::Close);
             LRESULT(0)
@@ -482,6 +499,9 @@ fn handle_key(state: &mut AppState, key: u32) {
     let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
     let shift = unsafe { GetKeyState(VK_SHIFT.0 as i32) } < 0;
     if state.video().is_some() && !ctrl {
+        if state.video_menu_key(key, shift) {
+            return;
+        }
         match key {
             k if k == VK_PRIOR.0 as u32 => return state.video_seek_relative(-5_000),
             k if k == VK_NEXT.0 as u32 => return state.video_seek_relative(5_000),

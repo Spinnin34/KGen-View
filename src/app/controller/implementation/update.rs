@@ -27,20 +27,39 @@ impl AppState {
             UpdateEvent::CheckComplete(Err(error)) => {
                 eprintln!("KGen View update check: {error}");
             }
-            UpdateEvent::InstallStarted(Ok(())) => {
-                self.update_download_busy = false;
-                self.update_status(Some(tr(self.lang(), Text::InstallingUpdate)));
-            }
-            UpdateEvent::InstallStarted(Err(error)) => {
+            UpdateEvent::DownloadComplete(result) => {
                 self.update_download_busy = false;
                 self.update_status(None);
-                self.show_error(&error);
+                match result {
+                    Ok(installer) => self.request_leave(PendingAction::Install(installer)),
+                    Err(error) => self.show_error(&error),
+                }
             }
         }
     }
 
+    pub(super) fn install_after_close(&mut self, installer: updater::VerifiedInstaller) {
+        let path = self.current_path();
+        let member = path
+            .and_then(|path| self.active_archive_member(path))
+            .map(|(archive, member)| (archive.source_path(), member));
+        let install = match installer.reopen(path, member) {
+            Ok(install) => install,
+            Err(error) => {
+                self.show_error(&error);
+                return;
+            }
+        };
+        self.install_on_exit = Some(install);
+        self.update_status(Some(tr(self.lang(), Text::InstallingUpdate)));
+        self.perform_action(PendingAction::Close);
+    }
+
     pub(super) fn begin_update_install(&mut self) {
-        if self.update_download_busy {
+        if self.update_download_busy
+            || self.install_on_exit.is_some()
+            || matches!(self.pending_action, Some(PendingAction::Install(_)))
+        {
             return;
         }
         let Some(update) = self.update_available.clone() else {
@@ -54,7 +73,7 @@ impl AppState {
             update.channel
         );
         self.update_status(Some(&message));
-        if let Err(error) = updater::start_install(
+        if let Err(error) = updater::start_download(
             self.hwnd,
             self.alive.clone(),
             self.update_events.clone(),

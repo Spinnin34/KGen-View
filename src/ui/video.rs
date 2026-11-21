@@ -28,8 +28,10 @@ use super::{layout::PxRect, theme::rgb};
 
 mod edge;
 mod layer;
+mod menu;
 pub use edge::{EdgeLayout, EdgeZone, ProgressLine, VolumeHit, VolumeLayout, VolumePainter};
-pub use layer::{Layer, LayerKind, WM_PANEL_INPUT, WM_VOLUME_INPUT};
+pub use layer::{Layer, LayerKind, WM_PANEL_INPUT, WM_VIDEO_MENU_INPUT, WM_VOLUME_INPUT};
+pub use menu::{MenuCommand, MenuHit, MenuPage, MenuRow, VideoMenu};
 
 const ACCENT: D2D1_COLOR_F = rgb(0xff8d42);
 const HOT_ACCENT: D2D1_COLOR_F = rgb(0xffbb89);
@@ -47,9 +49,7 @@ const HOVER: D2D1_COLOR_F = rgb(0x36363d);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Previous,
-    Back,
     Play,
-    Forward,
     Next,
     Volume,
     Loop,
@@ -104,11 +104,7 @@ impl PanelLayout {
         let pad = 10.0 * scale;
         let right = width - pad;
         let seek = PxRect::new(16.0 * scale, body.top, width - 16.0 * scale, 47.0 * scale);
-        let mut primary = vec![Action::Previous, Action::Play, Action::Next];
-        if width >= 515.0 * scale {
-            primary.insert(1, Action::Back);
-            primary.insert(3, Action::Forward);
-        }
+        let primary = [Action::Previous, Action::Play, Action::Next];
         let mut secondary = vec![Action::Fullscreen, Action::More];
         if width >= 237.0 * scale {
             secondary.splice(0..0, [Action::Volume, Action::Loop]);
@@ -260,15 +256,6 @@ impl PanelLayout {
         self.offset.y + self.body.top.round() as i32
     }
 
-    pub fn anchor(&self, action: Action) -> Option<POINT> {
-        self.buttons.iter().find_map(|(button, rect)| {
-            (*button == action).then_some(POINT {
-                x: self.offset.x + rect.right.round() as i32,
-                y: self.offset.y + rect.top.round() as i32,
-            })
-        })
-    }
-
     pub fn focus(
         &self,
         previous: Option<Action>,
@@ -316,7 +303,6 @@ impl Model<'_> {
     pub fn enabled(&self, action: Action) -> bool {
         match action {
             Action::Previous | Action::Next => self.can_navigate,
-            Action::Back | Action::Forward => self.status.seekable,
             Action::Tracks => self.media.is_some_and(|media| {
                 (self.status.seekable && !media.chapters.is_empty())
                     || media
@@ -335,8 +321,6 @@ impl Model<'_> {
         let labels = match action {
             Action::Previous => ("Vídeo anterior", "Previous video"),
             Action::Next => ("Vídeo siguiente", "Next video"),
-            Action::Back => ("Retroceder 10 s · J", "Back 10 s · J"),
-            Action::Forward => ("Avanzar 10 s · L", "Forward 10 s · L"),
             Action::Play => match self.status.phase {
                 Phase::Playing => ("Pausar", "Pause"),
                 Phase::Ended => ("Repetir", "Replay"),
@@ -369,7 +353,6 @@ impl Model<'_> {
     fn glyph(&self, action: Action) -> u16 {
         match action {
             Action::Previous => 0xe892,
-            Action::Back | Action::Forward => 0,
             Action::Tracks => 0xed1f,
             Action::Play if self.status.phase == Phase::Playing => 0xe769,
             Action::Play => 0xe768,
@@ -420,7 +403,6 @@ pub struct Painter {
     scale: f32,
     icons: IDWriteTextFormat,
     time: IDWriteTextFormat,
-    time_centered: IDWriteTextFormat,
     caption: IDWriteTextFormat,
     label: IDWriteTextFormat,
     brush: ID2D1SolidColorBrush,
@@ -466,7 +448,6 @@ impl Painter {
                 scale,
                 icons: format(w!("Segoe MDL2 Assets"), 15.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 time: format(w!("Consolas"), 11.5, DWRITE_TEXT_ALIGNMENT_LEADING)?,
-                time_centered: format(w!("Consolas"), 11.5, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 caption: format(w!("Segoe UI"), 11.0, DWRITE_TEXT_ALIGNMENT_LEADING)?,
                 label: format(w!("Segoe UI"), 11.0, DWRITE_TEXT_ALIGNMENT_CENTER)?,
                 brush: target.CreateSolidColorBrush(&rgb(0xf1f1f6), None)?,
@@ -722,8 +703,6 @@ impl Painter {
                     &self.label,
                     &color,
                 ),
-                Action::Back => label("−10", rect, &self.time_centered, &color),
-                Action::Forward => label("+10", rect, &self.time_centered, &color),
                 _ => draw_chars(&[model.glyph(*button)], rect, &self.icons, &color),
             }
         }
@@ -813,7 +792,7 @@ fn time_fraction(elapsed_ms: i64, duration_ms: i64) -> f32 {
     (elapsed_ms as f64 / duration_ms as f64).clamp(0.0, 1.0) as f32
 }
 
-fn time_label(ms: i64) -> String {
+pub fn time_label(ms: i64) -> String {
     let seconds = ms / 1000;
     let minutes = seconds / 60;
     if minutes < 60 {

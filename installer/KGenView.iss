@@ -170,10 +170,91 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,KGen View}"; 
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--capture-stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopCaptureHost"
 
 [Code]
+var
+  ReopenViewer: Boolean;
+  ReopenParameters: String;
+
+function OpenViewerProcess(Access: Cardinal; Inherit: Boolean; ProcessId: Cardinal): THandle;
+  external 'OpenProcess@kernel32.dll stdcall setuponly';
+function WaitForViewer(Process: THandle; Milliseconds: Cardinal): Cardinal;
+  external 'WaitForSingleObject@kernel32.dll stdcall setuponly';
+function CloseViewerProcessHandle(Process: THandle): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall setuponly';
+
+function UpdateParameter(Prefix: String): String;
+var
+  I: Integer;
+  Arg: String;
+begin
+  Result := '';
+  for I := 1 to ParamCount do
+  begin
+    Arg := ParamStr(I);
+    if Copy(Arg, 1, Length(Prefix)) = Prefix then
+    begin
+      Result := Copy(Arg, Length(Prefix) + 1, Length(Arg));
+      Exit;
+    end;
+  end;
+end;
+
+function DecodeReopenParameters(Encoded: String): Boolean;
+var
+  I, ByteValue: Integer;
+  Bytes: AnsiString;
+begin
+  Result := False;
+  if (Length(Encoded) > 28000) or ((Length(Encoded) mod 2) <> 0) then Exit;
+  SetLength(Bytes, Length(Encoded) div 2);
+  for I := 1 to Length(Bytes) do
+  begin
+    ByteValue := StrToIntDef('$' + Copy(Encoded, I * 2 - 1, 2), -1);
+    if (ByteValue < 1) or (ByteValue > 255) then Exit;
+    Bytes[I] := Chr(ByteValue);
+  end;
+  ReopenParameters := Utf8Decode(Bytes);
+  Result := True;
+end;
+
+function InitializeSetup: Boolean;
+var
+  ParentId: Integer;
+  Process: THandle;
+begin
+  Result := True;
+  ParentId := StrToIntDef(UpdateParameter('/KGENPARENTPID='), 0);
+  if ParentId <= 0 then Exit;
+  ReopenViewer := DecodeReopenParameters(UpdateParameter('/KGENREOPEN='));
+  if not ReopenViewer then
+  begin
+    Result := False;
+    Exit;
+  end;
+
+  Process := OpenViewerProcess($00100000, False, ParentId);
+  if Process = 0 then
+    Result := DLLGetLastError = 87
+  else
+  begin
+    try
+      Result := WaitForViewer(Process, 30000) = 0;
+    finally
+      CloseViewerProcessHandle(Process);
+    end;
+  end;
+  if not Result then
+  begin
+    if ActiveLanguage = 'spanish' then
+      MsgBox('Cierra KGen View y vuelve a iniciar la actualización.', mbError, MB_OK)
+    else
+      MsgBox('Close KGen View and start the update again.', mbError, MB_OK);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Extensions: array[0..13] of String;
-  I: Integer;
+  I, ExitCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
@@ -187,6 +268,10 @@ begin
     RegDeleteValue(HKCU, 'Software\Classes\.jpeg\OpenWithProgids', 'KGenView.jpg');
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\KGenView.Image');
   end;
+  if (CurStep = ssDone) and ReopenViewer then
+    if not Exec(ExpandConstant('{app}\{#MyAppExeName}'), ReopenParameters,
+      ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, ExitCode) then
+      Log('Could not reopen KGen View. Win32 error: ' + IntToStr(ExitCode));
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

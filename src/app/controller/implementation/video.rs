@@ -1,25 +1,25 @@
 use super::*;
 use crate::{
     platform::playback::{
-        Control, MAX_VOLUME, MEDIA_ITEM_LIMIT, MediaDetails, Phase, Playback, PlaybackStatus,
-        Preferences, Track, report_failure,
+        Control, MAX_VOLUME, MediaDetails, Phase, Playback, PlaybackStatus, Preferences,
+        report_failure,
     },
     ui::video::{
-        Action, EdgeLayout, EdgeZone, Hit, Layer, LayerKind, Model, Painter, PanelLayout,
-        ProgressLine, RATES, VolumeHit, VolumeLayout, VolumePainter, rate_label,
+        Action, EdgeLayout, EdgeZone, Hit, Layer, LayerKind, MenuCommand, MenuHit, MenuPage,
+        MenuRow, Model, Painter, PanelLayout, ProgressLine, RATES, VideoMenu, VolumeHit,
+        VolumeLayout, VolumePainter, rate_label, time_label,
     },
 };
 use windows::Win32::UI::{
     HiDpi::GetDpiForWindow,
     WindowsAndMessaging::{
-        AppendMenuW, CreatePopupMenu, DestroyMenu, GA_ROOTOWNER, GetAncestor, GetCursorPos, HMENU,
-        IsWindowVisible, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, SW_HIDE, TPM_BOTTOMALIGN,
-        TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN, TrackPopupMenu, WM_CAPTURECHANGED, WS_CHILD,
-        WS_DISABLED, WS_EX_NOPARENTNOTIFY, WindowFromPoint,
+        GA_ROOTOWNER, GetAncestor, GetCursorPos, IsWindowVisible, SW_HIDE, WM_CAPTURECHANGED,
+        WS_CHILD, WS_DISABLED, WS_EX_NOPARENTNOTIFY, WindowFromPoint,
     },
 };
 
 mod clock;
+mod menu;
 use clock::Playhead;
 
 const SS_BLACKRECT: WINDOW_STYLE = WINDOW_STYLE(4);
@@ -29,10 +29,6 @@ const PROGRESS_INTERVAL_MS: u32 = 33;
 const IDLE_INTERVAL_MS: u32 = 70;
 const HIDE_AFTER: std::time::Duration = std::time::Duration::from_millis(2400);
 
-const AUDIO_BASE: usize = 4096;
-const SUBTITLES_BASE: usize = AUDIO_BASE + MEDIA_ITEM_LIMIT;
-const CHAPTER_BASE: usize = SUBTITLES_BASE + MEDIA_ITEM_LIMIT;
-
 pub(in crate::app::controller) struct VideoView {
     surface: HWND,
     playback: Option<Playback>,
@@ -40,6 +36,7 @@ pub(in crate::app::controller) struct VideoView {
     pub(super) closing: bool,
     status: PlaybackStatus,
     media: Option<Arc<MediaDetails>>,
+    previous_position: Option<i64>,
     playhead: Playhead,
     started: Option<Instant>,
     resize_pending: bool,
@@ -63,7 +60,7 @@ struct VideoPanel {
     focus: Option<Action>,
     pressed: Option<Hit>,
     drag: Option<f32>,
-    menu_open: bool,
+    menu: Option<VideoMenu>,
     timer_interval: u32,
     timeline_key: Option<(i32, i64)>,
 }
@@ -85,7 +82,7 @@ impl VideoPanel {
             focus: None,
             pressed: None,
             drag: None,
-            menu_open: false,
+            menu: None,
             timer_interval: 0,
             timeline_key: None,
         }
@@ -120,6 +117,9 @@ impl VideoPanel {
         self.zone = EdgeZone::None;
         self.cursor = None;
         self.reveal = Reveal::default();
+        if let Some(menu) = &mut self.menu {
+            menu.close();
+        }
         if let Some(volume) = &mut self.volume {
             volume.clear_input();
         }
@@ -130,7 +130,7 @@ impl VideoPanel {
             || self.reveal.visible(now)
             || self.focus.is_some()
             || self.pressed.is_some()
-            || self.menu_open
+            || self.menu.as_ref().is_some_and(VideoMenu::opened)
     }
 }
 
@@ -277,6 +277,7 @@ impl VideoView {
             closing: false,
             status: PlaybackStatus::new(Phase::Opening),
             media: None,
+            previous_position: None,
             playhead: Playhead::new(Instant::now()),
             started: None,
             resize_pending: false,
@@ -365,6 +366,7 @@ impl AppState {
         };
         view.active = true;
         view.media = None;
+        view.previous_position = None;
         view.started = started;
         view.resize_pending = true;
         view.notice = None;
@@ -412,6 +414,7 @@ impl AppState {
                     volume.last_frame = None;
                 }
                 panel.clear_input();
+                panel.menu = None;
             }
             unsafe {
                 let _ = KillTimer(Some(self.hwnd), TIMER_VIDEO_PANEL);
@@ -440,6 +443,9 @@ impl AppState {
             }
             if let Some(panel) = &mut view.panel {
                 panel.layer.hide();
+                if let Some(menu) = &mut panel.menu {
+                    menu.close();
+                }
                 if let Some(progress) = &mut panel.progress {
                     progress.hide();
                 }
@@ -540,6 +546,9 @@ impl AppState {
             };
         view.playhead
             .sample(view.status, status, view.preferences.rate, now);
+        let menu_state_changed = view.status.phase != status.phase
+            || view.status.audio_track != status.audio_track
+            || view.status.subtitle_track != status.subtitle_track;
         view.status = status;
         if new_size || was_failed != view.failed() {
             self.layout_video();
@@ -551,6 +560,12 @@ impl AppState {
                 .is_some_and(|panel| panel.timeline_changed(view.display_status(now)))
         {
             self.render_video_panel();
+        }
+        if menu_state_changed || media_changed {
+            self.refresh_video_menu();
+            if self.video_menu_opened() {
+                self.render_video_panel();
+            }
         }
         if new_size
             || matches!(
@@ -641,8 +656,9 @@ impl AppState {
         } else {
             panel.layer.hide();
         }
+        let menu_open = panel.menu.as_ref().is_some_and(VideoMenu::opened);
         if let Some(volume) = &mut panel.volume {
-            if foreground && volume.wants_visible(now) {
+            if foreground && !menu_open && volume.wants_visible(now) {
                 if let Err(error) = volume.draw(self.hwnd, view.preferences) {
                     report_failure("draw volume controls", error.code().0);
                     volume.layer.hide();
@@ -663,6 +679,19 @@ impl AppState {
                 }
             } else {
                 progress.hide();
+            }
+        }
+        if let Some(menu) = &mut panel.menu {
+            if foreground
+                && menu_open
+                && let Some(dock) = &panel.layout
+            {
+                if let Err(error) = menu.draw(self.hwnd, dock) {
+                    report_failure("draw video settings", error.code().0);
+                    menu.close();
+                }
+            } else {
+                menu.close();
             }
         }
         let interactive = panel.layer.visible
@@ -709,6 +738,7 @@ impl AppState {
         let foreground = unsafe { GetForegroundWindow() == self.hwnd };
         if !foreground {
             let visible = panel.layer.visible
+                || panel.menu.as_ref().is_some_and(VideoMenu::opened)
                 || panel
                     .volume
                     .as_ref()
@@ -763,6 +793,15 @@ impl AppState {
         let moved = moved_screen || panel.zone != edge;
         panel.cursor = Some(screen);
         panel.zone = edge;
+        let menu_open = panel.menu.as_ref().is_some_and(VideoMenu::opened);
+        if menu_open
+            && panel
+                .menu
+                .as_ref()
+                .is_some_and(|menu| menu.local(cursor).is_some())
+        {
+            zone = EdgeZone::None;
+        }
         panel.reveal.pointer(zone == EdgeZone::Bottom, moved, now);
         let before = (panel.hover, panel.seek_hover, panel.drag, panel.focus);
         if moved && zone == EdgeZone::Bottom {
@@ -782,8 +821,14 @@ impl AppState {
             != panel.layer.visible
             || before != (panel.hover, panel.seek_hover, panel.drag, panel.focus)
             || panel.timeline_changed(status);
+        if let Some(menu) = &mut panel.menu
+            && menu.opened()
+        {
+            redraw |= menu.hover_at(cursor, moved_screen);
+        }
         let mut set_volume = None;
-        if let Some(volume) = &mut panel.volume
+        if !menu_open
+            && let Some(volume) = &mut panel.volume
             && let Some(layout) = side_layout
         {
             volume.reveal.pointer(zone == EdgeZone::Side, moved, now);
@@ -831,6 +876,11 @@ impl AppState {
     }
 
     pub(super) fn video_canvas_click(&mut self) -> bool {
+        if self.video_menu_opened() {
+            self.close_video_menu();
+            self.render_video_panel();
+            return true;
+        }
         if self.video().is_none() {
             return false;
         }
@@ -881,6 +931,7 @@ impl AppState {
         }
         if let Some(fraction) = seek {
             let position = (view.status.duration_ms as f64 * f64::from(fraction)).round() as i64;
+            self.close_video_menu();
             self.video_seek_to(position);
             return;
         }
@@ -957,8 +1008,11 @@ impl AppState {
             .filter(|view| view.active && view.status.seekable)
         {
             let position = position.clamp(0, view.status.duration_ms);
-            view.playhead.seek(position, Instant::now());
+            let now = Instant::now();
+            view.previous_position = Some(view.display_status(now).elapsed_ms);
+            view.playhead.seek(position, now);
             self.send_video_control(Control::Seek(position));
+            self.refresh_video_menu();
             self.reveal_video_panel();
         }
     }
@@ -979,8 +1033,14 @@ impl AppState {
     }
 
     pub(super) fn video_seek_relative(&mut self, delta_ms: i64) {
-        if self.video().is_some_and(|view| view.status.seekable) {
+        if let Some(view) = self
+            .video
+            .as_deref_mut()
+            .filter(|view| view.active && view.status.seekable)
+        {
+            view.previous_position = Some(view.display_status(Instant::now()).elapsed_ms);
             self.send_video_control(Control::SeekBy(delta_ms));
+            self.refresh_video_menu();
             self.reveal_video_panel();
         }
     }
@@ -995,6 +1055,9 @@ impl AppState {
     }
 
     pub(super) fn video_wheel_at(&mut self, mut point: POINT, delta: i16) -> bool {
+        if self.video_menu_wheel_at(point, delta) {
+            return true;
+        }
         let Some(panel) = self.video().and_then(|view| view.panel.as_ref()) else {
             return false;
         };
@@ -1110,10 +1173,11 @@ impl AppState {
     }
 
     fn video_action(&mut self, action: Action) {
+        if !matches!(action, Action::Rate | Action::Tracks | Action::More) {
+            self.close_video_menu();
+        }
         match action {
             Action::Previous => self.navigate(-1),
-            Action::Back => self.video_seek_relative(-10_000),
-            Action::Forward => self.video_seek_relative(10_000),
             Action::Play => self.video_pause(),
             Action::Next => self.navigate(1),
             Action::Volume => self.reveal_video_volume(),
@@ -1122,302 +1186,6 @@ impl AppState {
             Action::Fullscreen => self.toggle_fullscreen(),
             Action::Open => self.open_dialog(),
             Action::Update => self.begin_update_install(),
-        }
-    }
-
-    fn video_menu(&mut self, action: Action) {
-        const RATE_BASE: usize = 3000;
-        const LOOP: usize = 3010;
-        const MUTE: usize = 3011;
-        const BACK: usize = 3012;
-        const FORWARD: usize = 3013;
-        const KGEN_MENU: usize = 3014;
-        const VOLUME_DOWN: usize = 3015;
-        const VOLUME_UP: usize = 3016;
-        const NEXT_FRAME: usize = 3017;
-        let Some(view) = self.video() else { return };
-        let Some(panel) = &view.panel else { return };
-        let Some(mut anchor) = panel
-            .layout
-            .as_ref()
-            .and_then(|layout| layout.anchor(action))
-        else {
-            return;
-        };
-        let spanish = self.lang() == Language::Spanish;
-        let label = |es, en| if spanish { es } else { en };
-        let Ok(menu) = PopupMenu::new() else { return };
-        let preferences = view.preferences;
-        let generation = self.generation;
-        let status = view.display_status(Instant::now());
-        let media = view.media.clone();
-        let speed_items = |menu: &PopupMenu| {
-            for (index, rate) in RATES.into_iter().enumerate() {
-                menu.item(
-                    RATE_BASE + index,
-                    &rate_label(rate, self.lang()),
-                    rate == preferences.rate,
-                );
-            }
-        };
-        if action == Action::Rate {
-            speed_items(&menu);
-        } else if action == Action::Tracks {
-            let Some(media) = &media else {
-                return;
-            };
-            if !menu.add_media_submenus(media, status, spanish) {
-                return;
-            }
-        } else {
-            menu.item(cmd::OPEN, label("Abrir archivo…", "Open file…"), false);
-            menu.item(
-                cmd::OPEN_FOLDER,
-                label("Mostrar en el Explorador", "Show in Explorer"),
-                false,
-            );
-            menu.item(cmd::COPY_PATH, label("Copiar ruta", "Copy path"), false);
-            menu.separator();
-            menu.item(
-                BACK,
-                label("Retroceder 10 segundos", "Back 10 seconds"),
-                false,
-            );
-            menu.item(
-                FORWARD,
-                label("Avanzar 10 segundos", "Forward 10 seconds"),
-                false,
-            );
-            if status.video_ready && matches!(status.phase, Phase::Playing | Phase::Paused) {
-                menu.item(
-                    NEXT_FRAME,
-                    label("Siguiente fotograma	E", "Next frame	E"),
-                    false,
-                );
-            }
-            menu.item(
-                LOOP,
-                label("Repetir en bucle", "Loop video"),
-                preferences.looping,
-            );
-            menu.item(MUTE, label("Silenciar", "Mute"), preferences.muted);
-            menu.item(VOLUME_DOWN, label("Bajar volumen", "Volume down"), false);
-            menu.item(VOLUME_UP, label("Subir volumen", "Volume up"), false);
-            if let Ok(speed) = PopupMenu::new() {
-                speed_items(&speed);
-                menu.submenu(speed, label("Velocidad", "Playback speed"));
-            }
-            if let Some(media) = &media {
-                menu.add_media_submenus(media, status, spanish);
-            }
-            menu.separator();
-            menu.item(
-                KGEN_MENU,
-                label("Menú de KGen View", "KGen View menu"),
-                false,
-            );
-        }
-        if let Some(panel) = self
-            .video
-            .as_deref_mut()
-            .and_then(|view| view.panel.as_mut())
-        {
-            panel.menu_open = true;
-        }
-        let command = unsafe {
-            let _ = ClientToScreen(self.hwnd, &mut anchor);
-            TrackPopupMenu(
-                menu.0,
-                TPM_RETURNCMD | TPM_NONOTIFY | TPM_BOTTOMALIGN | TPM_RIGHTALIGN,
-                anchor.x,
-                anchor.y,
-                Some(0),
-                self.hwnd,
-                None,
-            )
-            .0 as usize
-        };
-        if let Some(panel) = self
-            .video
-            .as_deref_mut()
-            .and_then(|view| view.panel.as_mut())
-        {
-            panel.menu_open = false;
-        }
-        if generation != self.generation {
-            return;
-        }
-        match command {
-            track if (AUDIO_BASE..SUBTITLES_BASE).contains(&track) => {
-                if let Some(track) = media
-                    .as_ref()
-                    .and_then(|media| media.audio.get(track - AUDIO_BASE))
-                {
-                    self.send_video_control(Control::AudioTrack(track.id));
-                }
-            }
-            track if (SUBTITLES_BASE..CHAPTER_BASE).contains(&track) => {
-                if let Some(track) = media
-                    .as_ref()
-                    .and_then(|media| media.subtitles.get(track - SUBTITLES_BASE))
-                {
-                    self.send_video_control(Control::SubtitleTrack(track.id));
-                }
-            }
-            chapter if (CHAPTER_BASE..CHAPTER_BASE + MEDIA_ITEM_LIMIT).contains(&chapter) => {
-                if let Some(chapter) = media
-                    .as_ref()
-                    .and_then(|media| media.chapters.get(chapter - CHAPTER_BASE))
-                {
-                    self.video_seek_to(chapter.start_ms);
-                }
-            }
-            NEXT_FRAME => self.video_next_frame(),
-            rate if (RATE_BASE..RATE_BASE + RATES.len()).contains(&rate) => {
-                self.video_rate(RATES[rate - RATE_BASE])
-            }
-            LOOP => self.video_loop(),
-            MUTE => self.video_audio(0, true),
-            VOLUME_DOWN => self.video_audio(-5, false),
-            VOLUME_UP => self.video_audio(5, false),
-            BACK => self.video_seek_relative(-10_000),
-            FORWARD => self.video_seek_relative(10_000),
-            KGEN_MENU => {
-                if let Some(menu) = &self.menu {
-                    unsafe {
-                        menu.show_all(self.hwnd, anchor.x - 135, anchor.y - 140);
-                    }
-                }
-            }
-            0 => {}
-            other => self.handle_command(other),
-        }
-        self.reveal_video_panel();
-    }
-}
-
-struct PopupMenu(HMENU);
-
-impl PopupMenu {
-    fn new() -> Result<Self, WinError> {
-        Ok(Self(unsafe { CreatePopupMenu()? }))
-    }
-
-    fn item(&self, command: usize, text: &str, checked: bool) {
-        let flags = if checked {
-            MF_STRING | MF_CHECKED
-        } else {
-            MF_STRING
-        };
-        unsafe {
-            let _ = AppendMenuW(self.0, flags, command, PCWSTR(wide(text).as_ptr()));
-        }
-    }
-
-    fn add_media_submenus(
-        &self,
-        media: &MediaDetails,
-        status: PlaybackStatus,
-        spanish: bool,
-    ) -> bool {
-        let track_menu = |tracks: &[Track], base: usize, active: i32, title, disabled| {
-            if !tracks.iter().any(|track| track.id >= 0) {
-                return false;
-            }
-            let Ok(menu) = Self::new() else { return false };
-            for (index, track) in tracks.iter().enumerate() {
-                let name = if track.id < 0 {
-                    disabled
-                } else {
-                    track.name.as_str()
-                };
-                let fallback = format!("{} {}", if spanish { "Pista" } else { "Track" }, index + 1);
-                let name = if name.is_empty() { &fallback } else { name };
-                menu.item(base + index, &name.replace('&', "&&"), track.id == active);
-            }
-            self.submenu(menu, title);
-            true
-        };
-        let audio = track_menu(
-            &media.audio,
-            AUDIO_BASE,
-            status.audio_track,
-            if spanish {
-                "Pistas de audio"
-            } else {
-                "Audio tracks"
-            },
-            if spanish {
-                "Sin audio"
-            } else {
-                "Disable audio"
-            },
-        );
-        let subtitles = track_menu(
-            &media.subtitles,
-            SUBTITLES_BASE,
-            status.subtitle_track,
-            if spanish { "Subtítulos" } else { "Subtitles" },
-            if spanish { "Desactivados" } else { "Off" },
-        );
-        let mut added = audio || subtitles;
-        if status.seekable
-            && !media.chapters.is_empty()
-            && let Ok(menu) = Self::new()
-        {
-            let active = media
-                .chapters
-                .partition_point(|chapter| chapter.start_ms <= status.elapsed_ms)
-                .checked_sub(1);
-            for (index, chapter) in media.chapters.iter().enumerate() {
-                let fallback = format!(
-                    "{} {}",
-                    if spanish { "Capítulo" } else { "Chapter" },
-                    index + 1
-                );
-                let name = if chapter.name.is_empty() {
-                    &fallback
-                } else {
-                    &chapter.name
-                };
-                menu.item(
-                    CHAPTER_BASE + index,
-                    &name.replace('&', "&&"),
-                    active == Some(index),
-                );
-            }
-            self.submenu(menu, if spanish { "Capítulos" } else { "Chapters" });
-            added = true;
-        }
-        added
-    }
-
-    fn separator(&self) {
-        unsafe {
-            let _ = AppendMenuW(self.0, MF_SEPARATOR, 0, PCWSTR::null());
-        }
-    }
-
-    fn submenu(&self, menu: Self, text: &str) {
-        if unsafe {
-            AppendMenuW(
-                self.0,
-                MF_POPUP,
-                menu.0.0 as usize,
-                PCWSTR(wide(text).as_ptr()),
-            )
-        }
-        .is_ok()
-        {
-            std::mem::forget(menu);
-        }
-    }
-}
-
-impl Drop for PopupMenu {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = DestroyMenu(self.0);
         }
     }
 }

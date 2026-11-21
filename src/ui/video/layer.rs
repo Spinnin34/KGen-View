@@ -31,10 +31,12 @@ use windows::{
 
 pub const WM_PANEL_INPUT: u32 = WM_APP + 13;
 pub const WM_VOLUME_INPUT: u32 = WM_APP + 14;
+pub const WM_VIDEO_MENU_INPUT: u32 = WM_APP + 15;
 const CLASS: windows::core::PCWSTR = w!("KGenView.VideoControls");
 
 pub enum LayerKind {
     Controls,
+    Menu,
     Volume,
     Progress,
 }
@@ -79,6 +81,11 @@ impl Layer {
                 LayerKind::Controls => (
                     w!("KGen View Video Controls"),
                     WM_PANEL_INPUT,
+                    WINDOW_EX_STYLE::default(),
+                ),
+                LayerKind::Menu => (
+                    w!("KGen View Video Menu"),
+                    WM_VIDEO_MENU_INPUT,
                     WINDOW_EX_STYLE::default(),
                 ),
                 LayerKind::Volume => (

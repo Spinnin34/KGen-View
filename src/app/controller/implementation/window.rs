@@ -152,7 +152,14 @@ pub fn run() -> Result<(), WinError> {
             DispatchMessageW(&message);
         }
     }
-    unsafe { drop(Box::from_raw(raw_state)) };
+    let mut state = unsafe { Box::from_raw(raw_state) };
+    let install = state.install_on_exit.take();
+    drop(state);
+    if let Some(install) = install
+        && let Err(error) = install.launch()
+    {
+        fatal_error(&error);
+    }
     Ok(())
 }
 

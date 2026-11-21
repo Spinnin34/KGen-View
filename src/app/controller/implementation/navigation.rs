@@ -326,6 +326,7 @@ impl AppState {
     pub(super) fn perform_action(&mut self, action: PendingAction) {
         match action {
             PendingAction::Load(path) => self.start_load(path),
+            PendingAction::Install(installer) => self.install_after_close(installer),
             PendingAction::Close => {
                 if !self.close_video() {
                     unsafe {

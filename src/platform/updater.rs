@@ -1,9 +1,10 @@
 use std::{
     ffi::{OsStr, OsString, c_void},
-    fs::{self, OpenOptions},
-    io::Write,
-    os::windows::ffi::OsStrExt,
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
+    os::windows::{ffi::OsStrExt, fs::OpenOptionsExt},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -30,16 +31,14 @@ use windows::{
             BCryptCloseAlgorithmProvider, BCryptCreateHash, BCryptDestroyHash, BCryptFinishHash,
             BCryptGetProperty, BCryptHashData, BCryptOpenAlgorithmProvider,
         },
+        Storage::FileSystem::FILE_SHARE_READ,
         System::{
             Recovery::{REGISTER_APPLICATION_RESTART_FLAGS, RegisterApplicationRestart},
             Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW},
         },
-        UI::{
-            Shell::ShellExecuteW,
-            WindowsAndMessaging::{PostMessageW, SW_SHOWNORMAL, WM_APP},
-        },
+        UI::WindowsAndMessaging::{PostMessageW, WM_APP},
     },
-    core::{PCWSTR, w},
+    core::PCWSTR,
 };
 
 use crate::{mailbox::Mailbox, platform::text::wide};
@@ -63,7 +62,7 @@ pub struct UpdateInfo {
 
 pub enum UpdateEvent {
     CheckComplete(Result<Option<UpdateInfo>, String>),
-    InstallStarted(Result<(), String>),
+    DownloadComplete(Result<VerifiedInstaller, String>),
 }
 
 pub fn is_installed_copy() -> bool {
@@ -104,18 +103,7 @@ pub fn register_restart(path: Option<&Path>, archive_member: Option<(&Path, &str
         return;
     }
 
-    let mut arguments = Vec::new();
-    if let Some((archive_path, member_name)) = archive_member {
-        arguments.push(OsString::from("--open-archive-member"));
-        arguments.push(archive_path.as_os_str().to_os_string());
-        arguments.push(OsString::from(member_name));
-    } else if let Some(path) = path {
-        arguments.push(path.as_os_str().to_os_string());
-    }
-    if std::env::args_os().any(|argument| argument == "--mcp") {
-        arguments.push(OsString::from("--mcp"));
-    }
-
+    let arguments = restart_arguments(path, archive_member);
     let mut encoded = encode_restart_arguments(&arguments);
     if encoded.is_none()
         && let Some((archive_path, _)) = archive_member
@@ -137,6 +125,109 @@ pub fn register_restart(path: Option<&Path>, archive_member: Option<(&Path, &str
     unsafe {
         let _ = RegisterApplicationRestart(command_line, REGISTER_APPLICATION_RESTART_FLAGS(0));
     }
+}
+
+fn restart_arguments(path: Option<&Path>, archive_member: Option<(&Path, &str)>) -> Vec<OsString> {
+    let mut arguments = Vec::new();
+    if let Some((archive_path, member_name)) = archive_member {
+        arguments.push(OsString::from("--open-archive-member"));
+        arguments.push(archive_path.as_os_str().to_os_string());
+        arguments.push(OsString::from(member_name));
+    } else if let Some(path) = path {
+        arguments.push(path.as_os_str().to_os_string());
+    }
+    if std::env::args_os().any(|argument| argument == "--mcp") {
+        arguments.push(OsString::from("--mcp"));
+    }
+
+    arguments
+}
+
+pub struct VerifiedInstaller {
+    path: Option<PathBuf>,
+    lock: Option<File>,
+}
+
+impl Drop for VerifiedInstaller {
+    fn drop(&mut self) {
+        drop(self.lock.take());
+        if let Some(path) = &self.path {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+pub struct InstallOnExit {
+    installer: VerifiedInstaller,
+    reopen: String,
+    arguments: Vec<OsString>,
+}
+
+impl VerifiedInstaller {
+    pub fn reopen(
+        self,
+        path: Option<&Path>,
+        member: Option<(&Path, &str)>,
+    ) -> Result<InstallOnExit, String> {
+        let arguments = restart_arguments(path, member);
+        let reopen = encode_setup_arguments(&arguments)?;
+        Ok(InstallOnExit {
+            installer: self,
+            reopen,
+            arguments,
+        })
+    }
+}
+
+impl InstallOnExit {
+    pub fn launch(mut self) -> Result<(), String> {
+        let executable = self.installer.path.as_ref().expect("verified installer");
+        let launch = Command::new(executable)
+            .args([
+                "/SILENT",
+                "/SP-",
+                "/CLOSEAPPLICATIONS",
+                "/RESTARTAPPLICATIONS",
+                "/NORESTART",
+            ])
+            .arg(format!("/KGENPARENTPID={}", std::process::id()))
+            .arg(format!("/KGENREOPEN={}", self.reopen))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        if let Err(error) = launch {
+            if let Ok(viewer) = std::env::current_exe() {
+                let _ = Command::new(viewer).args(&self.arguments).spawn();
+            }
+            return Err(format!(
+                "Windows no pudo iniciar el instalador de KGen View: {error}"
+            ));
+        }
+        self.installer.path = None;
+        Ok(())
+    }
+}
+
+fn encode_setup_arguments(arguments: &[OsString]) -> Result<String, String> {
+    use std::fmt::Write as _;
+    let mut wide = Vec::new();
+    for argument in arguments {
+        if !wide.is_empty() {
+            wide.push(b' ' as u16);
+        }
+        quote_windows_argument(argument, &mut wide);
+    }
+    let command = String::from_utf16(&wide)
+        .map_err(|_| "La ruta de reapertura contiene caracteres no válidos.".to_owned())?;
+    if command.len() > 14_000 {
+        return Err("La ruta de reapertura supera el límite del instalador.".into());
+    }
+    let mut encoded = String::with_capacity(command.len() * 2);
+    for byte in command.bytes() {
+        write!(encoded, "{byte:02x}").expect("writing to a String");
+    }
+    Ok(encoded)
 }
 
 fn encode_restart_arguments(arguments: &[OsString]) -> Option<Vec<u16>> {
@@ -183,7 +274,7 @@ fn quote_windows_argument(argument: &OsStr, output: &mut Vec<u16>) {
     output.push(QUOTE);
 }
 
-pub fn start_install(
+pub fn start_download(
     hwnd: HWND,
     alive: Arc<AtomicBool>,
     events: Arc<Mailbox<UpdateEvent>>,
@@ -193,8 +284,13 @@ pub fn start_install(
     thread::Builder::new()
         .name("kgen-update-download".into())
         .spawn(move || {
-            let result = download_verify_and_launch(&update);
-            publish_event(target, &alive, &events, UpdateEvent::InstallStarted(result));
+            let result = download_and_verify(&update);
+            publish_event(
+                target,
+                &alive,
+                &events,
+                UpdateEvent::DownloadComplete(result),
+            );
         })
         .map(|_| ())
         .map_err(|error| format!("No se pudo iniciar la descarga: {error}"))
@@ -361,42 +457,72 @@ fn valid_release_tag(tag: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
-fn download_verify_and_launch(update: &UpdateInfo) -> Result<(), String> {
+fn download_and_verify(update: &UpdateInfo) -> Result<VerifiedInstaller, String> {
     if !is_installed_copy() {
         return Err(
             "La actualización automática solo está disponible en la copia instalada.".into(),
         );
     }
     let destination = new_download_path()?;
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&destination)
-            .map_err(|error| format!("No se pudo preparar el archivo temporal: {error}"))?;
-        let mut hasher = Sha256::new()?;
-        let downloaded = stream_https(&update.installer_url, MAX_INSTALLER_BYTES, |chunk| {
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&destination)
+        .map_err(|error| format!("No se pudo preparar el archivo temporal: {error}"))?;
+    let mut installer = VerifiedInstaller {
+        path: Some(destination.clone()),
+        lock: None,
+    };
+    let mut file = file;
+    let downloaded = stream_https(
+        &update.installer_url,
+        update.installer_size.min(MAX_INSTALLER_BYTES),
+        |chunk| {
             file.write_all(chunk)
-                .map_err(|error| format!("No se pudo guardar el instalador: {error}"))?;
-            hasher.update(chunk)
-        })?;
-        if downloaded != update.installer_size {
-            return Err("La descarga está incompleta; el instalador no se ejecutará.".into());
-        }
-        file.flush()
-            .and_then(|()| file.sync_all())
-            .map_err(|error| format!("No se pudo finalizar el archivo descargado: {error}"))?;
-        drop(file);
-        let actual_hash = hasher.finish()?;
-        if !actual_hash.eq_ignore_ascii_case(&update.installer_sha256) {
-            return Err("La verificación SHA-256 falló; el instalador no se ejecutará.".into());
-        }
-        launch_installer(&destination)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&destination);
+                .map_err(|error| format!("No se pudo guardar el instalador: {error}"))
+        },
+    )?;
+    if downloaded != update.installer_size {
+        return Err("La descarga está incompleta; el instalador no se ejecutará.".into());
     }
-    result
+    file.flush()
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("No se pudo finalizar el archivo descargado: {error}"))?;
+    drop(file);
+
+    // Lock the verified file against writes and replacement until CreateProcess opens it.
+    let mut locked = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ.0)
+        .open(&destination)
+        .map_err(|error| format!("No se pudo abrir la descarga para verificarla: {error}"))?;
+    verify_installer(&mut locked, update.installer_size, &update.installer_sha256)?;
+    installer.lock = Some(locked);
+    Ok(installer)
+}
+
+fn verify_installer(file: &mut File, size: u64, expected_hash: &str) -> Result<(), String> {
+    let mut hasher = Sha256::new()?;
+    let mut buffer = [0; 64 * 1024];
+    let mut stream = file.take(size.saturating_add(1));
+    let mut read = 0;
+    loop {
+        let count = stream
+            .read(&mut buffer)
+            .map_err(|error| format!("No se pudo verificar el instalador: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        read += count as u64;
+        hasher.update(&buffer[..count])?;
+    }
+    if read != size {
+        return Err("El tamaño del instalador no coincide con el manifiesto.".into());
+    }
+    if !hasher.finish()?.eq_ignore_ascii_case(expected_hash) {
+        return Err("La verificación SHA-256 falló; el instalador no se ejecutará.".into());
+    }
+    Ok(())
 }
 
 fn new_download_path() -> Result<PathBuf, String> {
@@ -409,25 +535,6 @@ fn new_download_path() -> Result<PathBuf, String> {
         "KGenView-update-{}-{timestamp}.exe",
         std::process::id()
     )))
-}
-
-fn launch_installer(path: &Path) -> Result<(), String> {
-    let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    let parameters = wide("/SILENT /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART");
-    let result = unsafe {
-        ShellExecuteW(
-            None,
-            w!("open"),
-            PCWSTR(path.as_ptr()),
-            PCWSTR(parameters.as_ptr()),
-            None,
-            SW_SHOWNORMAL,
-        )
-    };
-    if result.0 as isize <= 32 {
-        return Err("Windows no pudo iniciar el instalador de KGen View.".into());
-    }
-    Ok(())
 }
 
 fn get_https(url: &str, limit: u64) -> Result<Vec<u8>, String> {
