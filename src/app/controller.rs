@@ -14,7 +14,6 @@ use std::{
 };
 
 use windows::{
-    Win32::System::Variant::{VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_I4},
     Win32::{
         Foundation::{FILETIME, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SYSTEMTIME, WPARAM},
         Graphics::{
@@ -35,10 +34,7 @@ use windows::{
             },
         },
         System::{
-            Com::{
-                CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-                CoUninitialize,
-            },
+            Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
             LibraryLoader::GetModuleHandleW,
             Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
         },
@@ -54,7 +50,7 @@ use windows::{
             },
             Shell::{
                 DragAcceptFiles, DragFinish, DragQueryFileW, Folder2, IShellFolderViewDual,
-                IShellWindows, IWebBrowser2, ShellExecuteW, ShellWindows,
+                ShellExecuteW,
             },
             WindowsAndMessaging::{
                 CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW,
@@ -140,7 +136,6 @@ struct LoadPayload {
     generation: u64,
     path: PathBuf,
     result: Result<ImageDocument, ImageError>,
-    catalog: FolderCatalog,
     archive: Option<ArchiveSession>,
 }
 
@@ -203,6 +198,7 @@ struct AppState {
     cache: Vec<(PathBuf, ImageDocument)>,
     cache_bytes: usize,
     pending_catalog: Option<(u64, PathBuf)>,
+    deferred_load_error: Option<ImageError>,
     catalog_stamp: Option<SystemTime>,
     generation: u64,
     prefetch_enabled: bool,

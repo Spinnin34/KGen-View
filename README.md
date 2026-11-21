@@ -26,7 +26,7 @@ KGen View es un visor de imágenes para Windows 10 y 11 de 64 bits. Está constr
 - Modo oscuro, modo claro y seguimiento del tema del sistema.
 - Cambio de idioma entre español e inglés.
 - Arrastrar y soltar, apertura desde el Explorador y apertura por línea de comandos.
-- Navegación circular por las imágenes o por los vídeos de la carpeta, según el archivo abierto, con orden natural para nombres como `imagen2.png` e `imagen10.png`.
+- Navegación circular por las imágenes en el orden de la vista de la carpeta en el Explorador de archivos. Si la vista no está disponible, las imágenes se ordenan por nombre de forma natural (`imagen2.png` antes de `imagen10.png`). Los vídeos usan su propia lista por nombre.
 - Reproducción de vídeos locales con sonido y controles flotantes, bucle, búsqueda por arrastre, velocidad y pantalla completa.
 - Apertura de archivos ZIP y CBZ: indexado rápido y extracción bajo demanda mientras se navega por las imágenes.
 - Al abrir desde el Explorador una imagen dentro de un ZIP, carga el archivo completo y se sitúa en esa imagen.

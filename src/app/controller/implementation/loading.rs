@@ -33,9 +33,6 @@ impl AppState {
                 .iter()
                 .position(|archive| archive.contains_path(&path))
         };
-        if !opening_archive && self.catalog.contains(&path) {
-            self.catalog.update_index(&path);
-        }
         // Catalog entries have already been normalized by the initial scan.
         // Archive member paths are session identities; canonicalizing them can
         // change their spelling and break that identity on Windows.
@@ -53,6 +50,7 @@ impl AppState {
         self.loader.invalidate(generation);
         self.catalog_loader.invalidate(generation);
         self.pending_catalog = None;
+        self.deferred_load_error = None;
         self.view_pending = false;
         self.view_key = None;
         self.requested_page = 0;
@@ -87,14 +85,16 @@ impl AppState {
 
         let is_archive_member = self.active_archive.is_some();
         let kind = MediaKind::of(&path);
-        if !opening_archive && !is_archive_member && !self.catalog.matches(&path, kind) {
-            if self.catalog.kind() != kind {
+        if !opening_archive && !is_archive_member {
+            if self.catalog.matches(&path, kind) && self.catalog.contains(&path) {
+                self.catalog.update_index(&path);
+            } else {
                 self.catalog = FolderCatalog::default();
                 self.catalog_stamp = None;
+                self.pending_catalog = Some((generation, path.clone()));
+                self.catalog_loader
+                    .submit(generation, path.clone(), self.hwnd);
             }
-            self.pending_catalog = Some((generation, path.clone()));
-            self.catalog_loader
-                .submit(generation, path.clone(), self.hwnd);
         }
         if !opening_archive && !is_archive_member && kind == MediaKind::Video {
             self.start_video(path);
@@ -112,21 +112,12 @@ impl AppState {
             self.load_time_ms = 0;
             self.first_visible_cache_hit = true;
             self.first_visible = self.load_started.take();
-            let mut catalog = self.catalog.clone();
-            if !catalog.matches(&path, MediaKind::Image) {
-                catalog = FolderCatalog::default();
-            } else {
-                catalog.update_index(&path);
-            }
-            unsafe {
-                self.accept_load(LoadPayload {
-                    generation,
-                    path,
-                    result: Ok(document),
-                    catalog,
-                    archive: None,
-                });
-            }
+            self.accept_load(LoadPayload {
+                generation,
+                path,
+                result: Ok(document),
+                archive: None,
+            });
             return;
         }
 
@@ -142,17 +133,31 @@ impl AppState {
         );
     }
 
-    pub(super) unsafe fn accept_load(&mut self, payload: LoadPayload) {
+    pub(super) fn accept_load(&mut self, payload: LoadPayload) {
         if payload.generation != self.generation {
             return;
         }
         let LoadPayload {
             path,
             result,
-            catalog,
             archive,
             ..
         } = payload;
+        let result = match result {
+            Err(error)
+                if self
+                    .pending_catalog
+                    .as_ref()
+                    .is_some_and(|(generation, requested)| {
+                        *generation == self.generation && requested == &path
+                    }) =>
+            {
+                // The same catalog drives navigation and recovery from a bad first file.
+                self.deferred_load_error = Some(error);
+                return;
+            }
+            result => result,
+        };
         let archive_open_error = archive::is_archive_path(&path) && archive.is_none();
         let loaded_archive_index = if let Some(archive) = archive {
             self.cache.clear();
@@ -195,26 +200,10 @@ impl AppState {
                         .unwrap_or(0);
                 }
                 let is_archive_member = self.active_archive.is_some();
-                let needs_catalog = if is_archive_member {
+                if is_archive_member {
                     self.catalog = FolderCatalog::default();
                     self.catalog_stamp = None;
-                    false
-                } else {
-                    let is_same_folder = self.catalog.matches(&path, MediaKind::Image);
-                    let needs_catalog = catalog.files.is_empty() && !is_same_folder;
-                    if catalog.files.is_empty() || is_same_folder {
-                        if is_same_folder {
-                            self.catalog.update_index(&path);
-                        } else {
-                            self.catalog = FolderCatalog::default();
-                            self.catalog_stamp = None;
-                        }
-                    } else {
-                        self.catalog = catalog;
-                        self.catalog_stamp = folder_modified(&path);
-                    }
-                    needs_catalog
-                };
+                }
                 self.failed_paths.remove(&path);
                 self.active_path = Some(path.clone());
                 let (width, height) = document.view_dimensions();
@@ -244,18 +233,7 @@ impl AppState {
                 self.invalidate_image();
                 self.present_startup_window();
                 self.prepare_opened_image_view((width, height));
-                if needs_catalog {
-                    let catalog_already_requested = self.pending_catalog.as_ref().is_some_and(
-                        |(generation, requested_path)| {
-                            *generation == self.generation && requested_path == &path
-                        },
-                    );
-                    if !catalog_already_requested {
-                        self.pending_catalog = Some((self.generation, path.clone()));
-                        self.catalog_loader
-                            .submit(self.generation, path.clone(), self.hwnd);
-                    }
-                } else if self.prefetch_enabled {
+                if self.pending_catalog.is_none() && self.prefetch_enabled {
                     self.start_prefetch();
                 }
             }
@@ -288,14 +266,6 @@ impl AppState {
                     // directory for navigation or folder-catalog purposes.
                     self.catalog = FolderCatalog::default();
                     self.catalog_stamp = None;
-                } else {
-                    let is_same_folder = self.catalog.matches(&path, MediaKind::Image);
-                    if catalog.files.is_empty() && is_same_folder {
-                        self.catalog.update_index(&path);
-                    } else {
-                        self.catalog = catalog;
-                        self.catalog_stamp = folder_modified(&path);
-                    }
                 }
                 self.failed_paths.insert(path.clone());
                 let extension = path

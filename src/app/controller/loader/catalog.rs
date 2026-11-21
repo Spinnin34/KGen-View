@@ -1,8 +1,13 @@
 use super::*;
+use std::sync::atomic::AtomicUsize;
+use windows::Win32::System::Com::COINIT_APARTMENTTHREADED;
+
+use crate::{catalog::FolderCatalog, platform::explorer};
 
 pub struct CatalogService {
     pending: Arc<(Mutex<Option<CatalogRequest>>, Condvar)>,
     current_generation: Arc<AtomicU64>,
+    explorer_window: Arc<AtomicUsize>,
     shutdown: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     results: Arc<Mailbox<CatalogPayload>>,
@@ -20,14 +25,17 @@ impl CatalogService {
         let worker_results = results.clone();
         let pending = Arc::new((Mutex::new(None::<CatalogRequest>), Condvar::new()));
         let current_generation = Arc::new(AtomicU64::new(0));
+        let explorer_window = Arc::new(AtomicUsize::new(0));
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_pending = pending.clone();
         let worker_generation = current_generation.clone();
+        let worker_explorer_window = explorer_window.clone();
         let worker_shutdown = shutdown.clone();
 
         let worker = thread::Builder::new()
             .name("kgen-catalog".into())
             .spawn(move || {
+                let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
                 loop {
                     let request = {
                         let (lock, wake) = &*worker_pending;
@@ -49,7 +57,11 @@ impl CatalogService {
                             || worker_generation.load(Ordering::Acquire) != request.generation
                             || pending_has_work(&worker_pending)
                     };
-                    let catalog = FolderCatalog::scan_cancellable(&request.path, &should_cancel);
+                    let catalog = FolderCatalog::scan_cancellable(
+                        &request.path,
+                        worker_explorer_window.load(Ordering::Acquire),
+                        &should_cancel,
+                    );
                     if should_cancel() || !window_alive.load(Ordering::Acquire) {
                         continue;
                     }
@@ -62,12 +74,16 @@ impl CatalogService {
                         wake_window(request.hwnd, WM_CATALOG_DONE);
                     }
                 }
+                if initialized {
+                    unsafe { CoUninitialize() };
+                }
             })
             .expect("start folder catalog worker");
 
         Self {
             pending,
             current_generation,
+            explorer_window,
             shutdown,
             worker: Some(worker),
             results,
@@ -76,6 +92,13 @@ impl CatalogService {
 
     pub fn take_result(&self) -> Option<CatalogPayload> {
         self.results.take()
+    }
+
+    pub fn prefer_explorer_window(&self, hwnd: HWND) {
+        if explorer::is_explorer_window(hwnd) {
+            self.explorer_window
+                .store(hwnd.0 as usize, Ordering::Release);
+        }
     }
 
     pub fn submit(&self, generation: u64, path: PathBuf, hwnd: HWND) {

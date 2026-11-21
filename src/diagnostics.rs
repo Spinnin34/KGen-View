@@ -83,7 +83,7 @@ pub fn benchmark_cli() -> Option<Result<(), String>> {
                     0,
                 )
             } else {
-                let catalog = crate::catalog::FolderCatalog::scan_cancellable(&path, &|| false);
+                let catalog = crate::catalog::FolderCatalog::scan_cancellable(&path, 0, &|| false);
                 (0, 0, 0, 0, 0, catalog.files.len())
             };
             let milliseconds = start.elapsed().as_secs_f64() * 1000.0;

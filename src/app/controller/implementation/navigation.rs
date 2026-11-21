@@ -108,6 +108,15 @@ impl AppState {
         }
         self.catalog = payload.catalog;
         self.catalog_stamp = folder_modified(&payload.path);
+        if is_pending_request && let Some(error) = self.deferred_load_error.take() {
+            self.accept_load(LoadPayload {
+                generation: payload.generation,
+                path: payload.path,
+                result: Err(error),
+                archive: None,
+            });
+            return;
+        }
         if self.load_started.is_some() || !is_active_document {
             return;
         }
@@ -250,7 +259,17 @@ impl AppState {
     }
 
     pub(super) fn navigate_wheel(&mut self, offset: isize) {
-        let Some(path) = self.adjacent_image_path(offset) else {
+        // Coalesce wheel input without moving the cursor used by the arrows,
+        // prefetch and the status bar before a load actually starts.
+        let pending_target = self.pending_wheel_path.as_deref().and_then(|path| {
+            if let Some(index) = self.active_archive {
+                let archive = self.archive_sessions.get(index)?;
+                archive.member_path_adjacent(archive.member_index(path)?, offset)
+            } else {
+                self.catalog.adjacent_from(path, offset)
+            }
+        });
+        let Some(path) = pending_target.or_else(|| self.adjacent_image_path(offset)) else {
             return;
         };
         self.prefetch_enabled = true;
@@ -258,7 +277,6 @@ impl AppState {
 
         if self.active_path.as_ref() == Some(&path) {
             self.cancel_wheel_navigation();
-            self.update_navigation_cursor(&path);
             return;
         }
 
@@ -266,12 +284,10 @@ impl AppState {
         let has_unsaved_changes = self.document.as_ref().is_some_and(|doc| doc.dirty);
         if cached || has_unsaved_changes {
             self.cancel_wheel_navigation();
-            self.update_navigation_cursor(&path);
             self.request_leave(PendingAction::Load(path));
             return;
         }
 
-        self.update_navigation_cursor(&path);
         self.pending_wheel_path = Some(path);
         unsafe {
             let _ = KillTimer(Some(self.hwnd), TIMER_WHEEL_NAVIGATION);
@@ -300,17 +316,6 @@ impl AppState {
         self.pending_wheel_path = None;
         unsafe {
             let _ = KillTimer(Some(self.hwnd), TIMER_WHEEL_NAVIGATION);
-        }
-    }
-
-    fn update_navigation_cursor(&mut self, path: &Path) {
-        if let Some(index) = self.active_archive {
-            self.archive_cursor = self
-                .archive_sessions
-                .get(index)
-                .and_then(|archive| archive.member_index(path));
-        } else if self.catalog.contains(path) {
-            self.catalog.update_index(path);
         }
     }
 

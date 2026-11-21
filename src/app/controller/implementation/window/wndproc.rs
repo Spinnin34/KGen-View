@@ -114,7 +114,19 @@ pub(super) unsafe extern "system" fn window_proc(
             unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
         }
         WM_ACTIVATE => {
-            state.video_activation_changed(u32::from(loword(wparam.0)) != WA_INACTIVE);
+            let active = u32::from(loword(wparam.0)) != WA_INACTIVE;
+            if active
+                && crate::platform::explorer::is_explorer_window(HWND(lparam.0 as *mut c_void))
+                && state.load_started.is_none()
+                && let Some(path) = state.current_path()
+                && MediaKind::of(path) == MediaKind::Image
+                && state.active_archive.is_none()
+            {
+                state
+                    .catalog_loader
+                    .submit(state.generation, path.to_path_buf(), hwnd);
+            }
+            state.video_activation_changed(active);
             unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
         }
         WM_SETCURSOR if video_cursor_hidden() => {
@@ -296,6 +308,9 @@ pub(super) unsafe extern "system" fn window_proc(
                     DragQueryFileW(drop, 0, Some(&mut buffer));
                 }
                 let path = PathBuf::from(String::from_utf16_lossy(&buffer[..length as usize]));
+                state
+                    .catalog_loader
+                    .prefer_explorer_window(unsafe { GetForegroundWindow() });
                 state.request_leave(PendingAction::Load(path));
                 unsafe {
                     if IsIconic(hwnd).as_bool() {
@@ -309,9 +324,7 @@ pub(super) unsafe extern "system" fn window_proc(
         }
         WM_LOAD_DONE => {
             if let Some(payload) = state.loader.take_load() {
-                unsafe {
-                    state.accept_load(payload);
-                }
+                state.accept_load(payload);
             }
             LRESULT(0)
         }

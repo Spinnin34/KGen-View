@@ -253,23 +253,11 @@ pub(super) fn archive_name_from_explorer_temp_folder(folder_name: &str) -> Optio
 }
 
 fn shell_archive_contexts(launch_window: HWND) -> Vec<ExplorerArchiveContext> {
-    let Ok(shell_windows) =
-        (unsafe { CoCreateInstance::<_, IShellWindows>(&ShellWindows, None, CLSCTX_LOCAL_SERVER) })
-    else {
-        return Vec::new();
-    };
-    let Ok(window_count) = (unsafe { shell_windows.Count() }) else {
+    let Ok(browsers) = crate::platform::explorer::folder_windows() else {
         return Vec::new();
     };
     let mut contexts = Vec::new();
-    for index in 0..window_count {
-        let index_variant = integer_variant(index);
-        let Ok(dispatch) = (unsafe { shell_windows.Item(&index_variant) }) else {
-            continue;
-        };
-        let Ok(browser) = dispatch.cast::<IWebBrowser2>() else {
-            continue;
-        };
+    for browser in browsers {
         let view = unsafe { browser.Document() }
             .ok()
             .and_then(|document| document.cast::<IShellFolderViewDual>().ok());
@@ -370,20 +358,6 @@ fn hex_value(value: u8) -> Option<u8> {
         b'a'..=b'f' => Some(value - b'a' + 10),
         b'A'..=b'F' => Some(value - b'A' + 10),
         _ => None,
-    }
-}
-
-pub(super) fn integer_variant(value: i32) -> VARIANT {
-    VARIANT {
-        Anonymous: VARIANT_0 {
-            Anonymous: std::mem::ManuallyDrop::new(VARIANT_0_0 {
-                vt: VT_I4,
-                wReserved1: 0,
-                wReserved2: 0,
-                wReserved3: 0,
-                Anonymous: VARIANT_0_0_0 { lVal: value },
-            }),
-        },
     }
 }
 

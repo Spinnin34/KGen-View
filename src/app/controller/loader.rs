@@ -29,7 +29,6 @@ use windows::Win32::{
 };
 
 use crate::{
-    catalog::FolderCatalog,
     i18n::Language,
     imaging::{DecodeRequest, ImageDocument},
     mailbox::Mailbox,
@@ -145,7 +144,7 @@ impl DecodeService {
                                     || pending_has_work(&worker_pending)
                             };
                             let decode = |path: &std::path::Path| ImageDocument::decode_request(path,&should_cancel,wic_factory.as_ref(),&request);
-                            let (loaded_path, result, catalog, archive) = if is_archive_path(&path)
+                            let (loaded_path, result, archive) = if is_archive_path(&path)
                             {
                                 match ArchiveSession::open(&path, &should_cancel, language) {
                                     Ok(archive) => {
@@ -157,10 +156,7 @@ impl DecodeService {
                                             let image_path = member.path().to_path_buf();
                                             let lease=member.lease();
                                             let result=member.extract(&should_cancel,language).and_then(|()|decode(&image_path)).map(|mut document| { document.source_lease=Some(lease); document });
-                                            // Archive navigation is driven by the session's sorted
-                                            // member list. Do not clone it into a folder catalog
-                                            // keyed by extracted temporary paths.
-                                            (image_path, result, FolderCatalog::default(), Some(archive))
+                                            (image_path, result, Some(archive))
                                         } else {
                                             let error = if language == Language::Spanish {
                                                 "No se encontró la imagen seleccionada dentro del ZIP."
@@ -170,17 +166,15 @@ impl DecodeService {
                                             (
                                                 path,
                                                 Err(crate::imaging::ImageError(error.into())),
-                                                FolderCatalog::default(),
                                                 None,
                                             )
                                         }
                                     }
                                     Err(error) => {
-                                        (path, Err(error), FolderCatalog::default(), None)
+                                        (path, Err(error), None)
                                     }
                                 }
                             } else {
-                                let archive_member_load = archive_member.is_some();
                                 let result = match archive_member {
                                     Some(member) => {
                                         let lease=member.lease();
@@ -188,15 +182,7 @@ impl DecodeService {
                                     },
                                     None => decode(&path),
                                 };
-                                // A failed external load still needs a catalog so the
-                                // UI can skip to the next valid image without scanning
-                                // the folder on the UI thread.
-                                let catalog = if result.is_err() && !archive_member_load {
-                                    FolderCatalog::scan_cancellable(&path, &should_cancel)
-                                } else {
-                                    FolderCatalog::default()
-                                };
-                                (path, result, catalog, None)
+                                (path, result, None)
                             };
                             if should_cancel() {
                                 continue;
@@ -209,7 +195,6 @@ impl DecodeService {
                                     generation,
                                     path: loaded_path,
                                     result,
-                                    catalog,
                                     archive,
                                 },
                             ) {

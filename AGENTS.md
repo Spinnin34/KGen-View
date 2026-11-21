@@ -4,6 +4,7 @@
 
 - Mantén operativo el publicador de `.github/workflows/windows.yml`: cada push a `main` pasa los controles de calidad, compila Windows y publica una beta en GitHub Releases. Las instalaciones siguen la beta más reciente y muestran el botón de actualización cuando hay una versión nueva.
 - Las versiones estables se publican al subir una etiqueta `vX.Y.Z` que coincida exactamente con `version` en `Cargo.toml`. No cambies la versión para publicar betas.
+- Publica las actualizaciones beta y estables sin emojis en el título, los encabezados ni el contenido de las notas de GitHub Releases. Escribe también sin emojis el texto de los commits que alimenta esas notas.
 - Cuando el usuario pida actualizar o corregir la app, conserva el flujo completo de actualización. Tras implementar y validar los cambios, publícalos en `main` y comprueba que Actions haya completado la compilación y la publicación, salvo que el usuario pida expresamente no publicar.
 - Antes de publicar, conserva cambios locales previos y revisa el conjunto de archivos que se va a incluir. No añadas `.idea/`, secretos ni ejecutables locales de `dist/`; Actions genera los instaladores y manifiestos de release.
 - Para validar localmente, ejecuta `cargo fmt -- --check` y `cargo check --locked`. La validación de GitHub Actions también ejecuta Clippy, tests y una compilación optimizada; no omitas ese workflow al publicar.

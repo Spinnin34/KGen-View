@@ -18,6 +18,7 @@ impl AppState {
             cache: Vec::new(),
             cache_bytes: 0,
             pending_catalog: None,
+            deferred_load_error: None,
             catalog_stamp: None,
             generation: 0,
             prefetch_enabled: true,

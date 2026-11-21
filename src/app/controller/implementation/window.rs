@@ -79,6 +79,7 @@ pub fn run() -> Result<(), WinError> {
             );
         }
         let state = state_mut(hwnd);
+        state.catalog_loader.prefer_explorer_window(launch_window);
         state.startup_window_pending = fit_on_startup
             && SetTimer(
                 Some(hwnd),

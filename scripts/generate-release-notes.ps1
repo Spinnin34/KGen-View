@@ -81,12 +81,7 @@ $notes.Add("Canal: $channelLabel")
 $notes.Add("Build: $head")
 $notes.Add('')
 foreach ($entry in $sections.GetEnumerator()) {
-    $icon = switch ($entry.Key) {
-        'Novedades' { '✨' }
-        'Mejoras' { '⚡' }
-        'Correcciones' { '🐛' }
-    }
-    $notes.Add("## $icon $($entry.Key)")
+    $notes.Add("## $($entry.Key)")
     if ($entry.Value.Count -eq 0) {
         $notes.Add('- Sin cambios en esta categoría.')
     } else {

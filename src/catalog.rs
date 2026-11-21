@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::HashMap,
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -37,7 +38,11 @@ impl MediaKind {
 }
 
 impl FolderCatalog {
-    pub fn scan_cancellable(current: &Path, should_cancel: &impl Fn() -> bool) -> Self {
+    pub fn scan_cancellable(
+        current: &Path,
+        explorer_window: usize,
+        should_cancel: &impl Fn() -> bool,
+    ) -> Self {
         let Some(folder) = current.parent() else {
             return Self::default();
         };
@@ -49,7 +54,7 @@ impl FolderCatalog {
             MediaKind::Image => is_supported,
             MediaKind::Video => is_video,
         };
-        let mut entries: Vec<(PathBuf, String)> = Vec::new();
+        let mut entries = Vec::new();
         for entry in read_dir {
             if should_cancel() {
                 return Self::default();
@@ -63,18 +68,31 @@ impl FolderCatalog {
                 continue;
             };
             if file_type.is_file() {
-                let name = display_name(&path);
-                entries.push((path, name));
+                entries.push(path);
             }
         }
+        if kind == MediaKind::Image
+            && !should_cancel()
+            && let Some(names) =
+                crate::platform::explorer::folder_file_names(folder, explorer_window, should_cancel)
+            && let Some(files) = files_in_view_order(&entries, current, names)
+        {
+            return Self::from_files(files, Some(current), kind);
+        }
         if should_cancel() {
             return Self::default();
         }
-        entries.sort_unstable_by(|a, b| natural_cmp(&a.1, &b.1));
+        let mut entries: Vec<_> = entries
+            .into_iter()
+            .map(|path| (display_name(&path), path))
+            .collect();
+        entries.sort_unstable_by(|(a_name, a_path), (b_name, b_path)| {
+            natural_cmp(a_name, b_name).then_with(|| a_path.cmp(b_path))
+        });
         if should_cancel() {
             return Self::default();
         }
-        let files: Vec<PathBuf> = entries.into_iter().map(|(path, _)| path).collect();
+        let files = entries.into_iter().map(|(_, path)| path).collect();
         Self::from_files(files, Some(current), kind)
     }
 
@@ -91,10 +109,6 @@ impl FolderCatalog {
             index,
             kind,
         }
-    }
-
-    pub fn kind(&self) -> MediaKind {
-        self.kind
     }
 
     pub fn matches(&self, path: &Path, kind: MediaKind) -> bool {
@@ -124,11 +138,18 @@ impl FolderCatalog {
     }
 
     pub fn adjacent_wrapped(&self, offset: isize) -> Option<PathBuf> {
+        self.adjacent_at(self.index?, offset)
+    }
+
+    pub fn adjacent_from(&self, path: &Path, offset: isize) -> Option<PathBuf> {
+        self.adjacent_at(*self.positions.get(&path_key(path))?, offset)
+    }
+
+    fn adjacent_at(&self, current: usize, offset: isize) -> Option<PathBuf> {
         if self.files.len() < 2 {
             return None;
         }
-        let current = self.index.unwrap_or(0) as isize;
-        let index = (current + offset).rem_euclid(self.files.len() as isize) as usize;
+        let index = (current as isize + offset).rem_euclid(self.files.len() as isize) as usize;
         self.files.get(index).cloned()
     }
 
@@ -138,6 +159,28 @@ impl FolderCatalog {
     pub fn last(&self) -> Option<PathBuf> {
         self.files.last().cloned()
     }
+}
+
+fn files_in_view_order(
+    entries: &[PathBuf],
+    current: &Path,
+    names: Vec<OsString>,
+) -> Option<Vec<PathBuf>> {
+    let mut by_name: HashMap<_, _> = entries
+        .iter()
+        .filter_map(|path| Some((path.file_name()?, path)))
+        .collect();
+    let files: Vec<_> = names
+        .iter()
+        .filter_map(|name| by_name.remove(name.as_os_str()))
+        .cloned()
+        .collect();
+    // A filtered or out-of-date view may omit the open file. Fall back to
+    // the folder scan so navigation can still start from that file.
+    files
+        .iter()
+        .any(|path| same_path(path, current))
+        .then_some(files)
 }
 
 pub fn is_supported(path: &Path) -> bool {
@@ -223,7 +266,10 @@ pub fn natural_cmp(a: &str, b: &str) -> Ordering {
             bi += bc.len_utf8();
         }
     }
-    aa.len().cmp(&bb.len()).then_with(|| a.cmp(b))
+    (aa.len() - ai)
+        .cmp(&(bb.len() - bi))
+        .then_with(|| aa.len().cmp(&bb.len()))
+        .then_with(|| a.cmp(b))
 }
 
 #[cfg(test)]
@@ -238,6 +284,35 @@ mod tests {
             names,
             vec!["Image1.png", "image01.png", "image2.png", "image10.png"]
         );
+    }
+
+    #[test]
+    fn natural_order_compares_prefixes_ignoring_leading_zeroes() {
+        assert_eq!(natural_cmp("a000", "a0b"), Ordering::Less);
+    }
+
+    #[test]
+    fn explorer_order_filters_the_scan_and_keeps_the_open_file_as_anchor() {
+        let files: Vec<_> = ["image1.png", "image2.png", "image10.png", "hidden.png"]
+            .into_iter()
+            .map(|name| Path::new("photos").join(name))
+            .collect();
+        let names = [
+            "image10.png",
+            "video.mp4",
+            "image2.png",
+            "image2.png",
+            "image1.png",
+        ]
+        .map(OsString::from);
+        let ordered = files_in_view_order(&files, &files[1], names.to_vec()).unwrap();
+        let catalog = FolderCatalog::from_files(ordered, Some(&files[1]), MediaKind::Image);
+        assert_eq!(catalog.adjacent_wrapped(1), Some(files[0].clone()));
+        assert_eq!(catalog.adjacent_wrapped(-1), Some(files[2].clone()));
+        assert_eq!(catalog.adjacent_from(&files[0], 1), Some(files[2].clone()));
+        assert_eq!(catalog.index, Some(1));
+        assert_eq!(catalog.files.len(), 3);
+        assert!(files_in_view_order(&files, &files[3], names.to_vec()).is_none());
     }
 
     #[test]
@@ -302,8 +377,8 @@ mod tests {
         for name in names {
             fs::write(folder.join(name), []).unwrap();
         }
-        let photos = FolderCatalog::scan_cancellable(&folder.join(names[0]), &|| false);
-        let videos = FolderCatalog::scan_cancellable(&folder.join(names[1]), &|| false);
+        let photos = FolderCatalog::scan_cancellable(&folder.join(names[0]), 0, &|| false);
+        let videos = FolderCatalog::scan_cancellable(&folder.join(names[1]), 0, &|| false);
         for name in names {
             fs::remove_file(folder.join(name)).unwrap();
         }
