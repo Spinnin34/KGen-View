@@ -1,14 +1,12 @@
 use super::*;
 use crate::imaging::{ResampleFilter, editable_size};
 
-pub(super) const HEIGHT: i32 = 332;
 const MODE: i32 = 200;
 const WIDTH_INPUT: i32 = 201;
 const HEIGHT_INPUT: i32 = 202;
 const LOCK: i32 = 203;
 const FILTER: i32 = 204;
-const PRESET: i32 = 205;
-const ANCHOR: i32 = 206;
+const MODE_ALT: i32 = 205;
 const TRANSPARENT_FILL: i32 = 207;
 const COLOR: i32 = 208;
 const SUMMARY: i32 = 209;
@@ -17,15 +15,18 @@ const LEFT: i32 = 211;
 const RIGHT: i32 = 212;
 const TOP: i32 = 213;
 const BOTTOM: i32 = 214;
-const SIZE_LABELS: [i32; 3] = [215, 216, 217];
+const SIZE_LABELS: [i32; 2] = [215, 216];
 const MARGIN_LABELS: [i32; 4] = [218, 219, 220, 221];
-const ANCHOR_LABEL: i32 = 222;
 const COLOR_LABEL: i32 = 223;
+const ANCHOR: i32 = 230;
+const PRESET: i32 = 240;
+const HALF: i32 = 246;
+const DOUBLE: i32 = 247;
 const PRESETS: [(&str, u32, u32); 6] = [
     ("640 × 480", 640, 480),
     ("1024 × 768", 1024, 768),
     ("1280 × 720 (HD)", 1280, 720),
-    ("1920 × 1080 (Full HD)", 1920, 1080),
+    ("1920 × 1080", 1920, 1080),
     ("2560 × 1440 (QHD)", 2560, 1440),
     ("3840 × 2160 (4K)", 3840, 2160),
 ];
@@ -55,105 +56,189 @@ impl Panel {
         }
     }
 
-    pub fn create(&mut self, hwnd: HWND, d: &Dialog) -> HWND {
-        d.label(
-            hwnd,
-            0,
-            &format!(
-                "{}   {} × {} px",
-                d.text("Tamaño actual", "Current size"),
-                self.original.0,
-                self.original.1
-            ),
-            [22, 19, 244, 23],
-        );
-        d.label(hwnd, SUMMARY, "", [274, 19, 240, 23]);
-        let (mode_label, mode_items) = match self.tool {
-            SizeTool::Canvas => (
-                d.text("Método", "Method"),
-                [
-                    d.text("Dimensiones finales", "Final dimensions"),
-                    d.text("Márgenes por lado", "Margins per side"),
-                ],
-            ),
-            SizeTool::Resize => (
-                d.text("Unidades", "Units"),
-                [d.text("Píxeles", "Pixels"), d.text("Porcentaje", "Percent")],
-            ),
-        };
-        d.label(hwnd, 0, mode_label, [22, 63, 112, 22]);
-        d.combo(hwnd, MODE, &mode_items, 0, [140, 59, 202, 120]);
-        d.label(
-            hwnd,
-            SIZE_LABELS[0],
-            d.text("Ancho", "Width"),
-            [22, 106, 105, 22],
-        );
-        let width = d.input(
-            hwnd,
-            WIDTH_INPUT,
-            &self.original.0.to_string(),
-            [140, 102, 106, 25],
-        );
-        d.label(
-            hwnd,
-            SIZE_LABELS[1],
-            d.text("Alto", "Height"),
-            [272, 106, 110, 22],
-        );
-        d.input(
-            hwnd,
-            HEIGHT_INPUT,
-            &self.original.1.to_string(),
-            [390, 102, 106, 25],
-        );
+    pub fn client_size(&self) -> (i32, i32) {
         match self.tool {
-            SizeTool::Canvas => self.create_canvas(hwnd, d),
-            SizeTool::Resize => self.create_resize(hwnd, d),
+            SizeTool::Canvas => (588, 284),
+            SizeTool::Resize => (536, 294),
         }
-        d.label(hwnd, ERROR, "", [22, 260, 490, 22]);
+    }
+
+    pub fn create(&self, hwnd: HWND, d: &Dialog) -> HWND {
+        let (width, height) = self.client_size();
+        let current = format!(
+            "{}   {} × {} px",
+            d.text("Tamaño actual", "Current size"),
+            self.original.0,
+            self.original.1
+        );
+        let focus = match self.tool {
+            SizeTool::Canvas => self.create_canvas(hwnd, d, &current),
+            SizeTool::Resize => self.create_resize(hwnd, d, &current),
+        };
+        d.label(hwnd, ERROR, "", [13, height - 56, width - 26, 19]);
+        d.divider(hwnd, 8, height - 34, width - 16);
         d.button(
             hwnd,
             ACCEPT,
             d.text("Aplicar", "Apply"),
             BS_DEFPUSHBUTTON,
-            [304, 287, 102, 29],
+            [width - 190, height - 28, 86, 22],
         );
         d.button(
             hwnd,
             CANCEL,
             d.text("Cancelar", "Cancel"),
             BS_PUSHBUTTON,
-            [412, 287, 102, 29],
+            [width - 96, height - 28, 86, 22],
         );
         self.refresh(hwnd, d);
         unsafe {
-            SendMessageW(width, EM_SETSEL, None, Some(LPARAM(-1)));
+            SendMessageW(focus, EM_SETSEL, None, Some(LPARAM(-1)));
         }
+        focus
+    }
+
+    fn create_canvas(&self, hwnd: HWND, d: &Dialog, current: &str) -> HWND {
+        d.label(hwnd, 0, current, [14, 10, 265, 19]);
+        d.label(hwnd, SUMMARY, "", [318, 10, 260, 19]);
+        d.group(hwnd, d.text("Método", "Method"), [8, 33, 301, 192]);
+        d.group(hwnd, d.text("Anclaje", "Anchor"), [317, 33, 263, 110]);
+        d.group(
+            hwnd,
+            d.text("Relleno del lienzo", "Canvas fill"),
+            [317, 147, 263, 78],
+        );
+
+        self.mode(
+            hwnd,
+            d,
+            MODE_ALT,
+            d.text("Márgenes en píxeles", "Margins in pixels"),
+            [18, 50, 230, 18],
+        );
+        for (index, (label, id)) in [
+            (d.text("Izquierda", "Left"), LEFT),
+            (d.text("Derecha", "Right"), RIGHT),
+            (d.text("Arriba", "Top"), TOP),
+            (d.text("Abajo", "Bottom"), BOTTOM),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let x = 24 + (index % 2) as i32 * 140;
+            let y = 75 + (index / 2) as i32 * 25;
+            d.label(hwnd, MARGIN_LABELS[index], label, [x, y + 2, 64, 18]);
+            d.input(hwnd, id, "0", [x + 66, y, 57, 20]);
+        }
+        d.label(
+            hwnd,
+            0,
+            d.text(
+                "Los valores negativos recortan la imagen.",
+                "Negative values crop the image.",
+            ),
+            [24, 127, 270, 18],
+        );
+        d.divider(hwnd, 18, 151, 281);
+        self.mode(
+            hwnd,
+            d,
+            MODE,
+            d.text("Dimensiones finales", "Final dimensions"),
+            [18, 161, 226, 18],
+        );
+        let width = self.dimension_fields(hwnd, d, 24, 186, 140);
+
+        let anchors = [
+            d.text("Sup. izq.", "Top left"),
+            d.text("Sup. centro", "Top middle"),
+            d.text("Sup. der.", "Top right"),
+            d.text("Centro izq.", "Mid. left"),
+            d.text("Centro", "Center"),
+            d.text("Centro der.", "Mid. right"),
+            d.text("Inf. izq.", "Bot. left"),
+            d.text("Inf. centro", "Bot. middle"),
+            d.text("Inf. der.", "Bot. right"),
+        ];
+        for (index, caption) in anchors.iter().enumerate() {
+            let mut style = WINDOW_STYLE(BS_AUTORADIOBUTTON as u32);
+            if index == 0 {
+                style |= WS_GROUP;
+            }
+            if index == 4 {
+                style |= WS_TABSTOP;
+            }
+            d.radio(
+                hwnd,
+                ANCHOR + index as i32,
+                caption,
+                style,
+                [
+                    327 + (index % 3) as i32 * 83,
+                    53 + (index / 3) as i32 * 25,
+                    83,
+                    20,
+                ],
+            );
+        }
+        send(control(hwnd, ANCHOR + 4), BM_SETCHECK, 1);
+        d.checkbox(
+            hwnd,
+            TRANSPARENT_FILL,
+            d.text("Transparente", "Transparent"),
+            true,
+            [329, 165, 228, 20],
+        );
+        d.label(
+            hwnd,
+            COLOR_LABEL,
+            d.text("Color hexadecimal", "Hex color"),
+            [330, 193, 130, 18],
+        );
+        d.input(hwnd, COLOR, "#000000", [466, 190, 96, 21]);
+        self.show_canvas_mode(hwnd);
         width
     }
 
-    fn create_resize(&self, hwnd: HWND, d: &Dialog) {
+    fn create_resize(&self, hwnd: HWND, d: &Dialog, current: &str) -> HWND {
+        d.group(
+            hwnd,
+            d.text("Tamaño de imagen", "Image size"),
+            [8, 5, 257, 64],
+        );
+        d.group(
+            hwnd,
+            d.text("Dimensiones nuevas", "New dimensions"),
+            [8, 73, 257, 105],
+        );
+        d.group(
+            hwnd,
+            d.text("Filtro de remuestreo", "Resampling filter"),
+            [8, 182, 257, 51],
+        );
+        d.group(
+            hwnd,
+            d.text("Tamaños predefinidos", "Standard sizes"),
+            [273, 5, 255, 228],
+        );
+        d.label(hwnd, 0, current, [20, 24, 230, 18]);
+        d.label(hwnd, SUMMARY, "", [20, 44, 230, 18]);
+
+        self.mode(hwnd, d, MODE, d.text("Píxeles", "Pixels"), [20, 92, 80, 18]);
+        self.mode(
+            hwnd,
+            d,
+            MODE_ALT,
+            d.text("Porcentaje", "Percent"),
+            [108, 92, 135, 18],
+        );
+        let width = self.dimension_fields(hwnd, d, 20, 118, 121);
         d.checkbox(
             hwnd,
             LOCK,
             d.text("Mantener proporción", "Keep aspect ratio"),
             true,
-            [140, 139, 230, 24],
-        );
-        d.label(hwnd, 0, d.text("Preajuste", "Preset"), [22, 184, 112, 22]);
-        let mut items = vec![
-            d.text("Elegir un tamaño", "Choose a size"),
-            d.text("Mitad", "Half"),
-            d.text("Doble", "Double"),
-        ];
-        items.extend(PRESETS.iter().map(|preset| preset.0));
-        d.combo(hwnd, PRESET, &items, 0, [140, 180, 270, 240]);
-        d.label(
-            hwnd,
-            0,
-            d.text("Remuestreo", "Resampling"),
-            [22, 223, 112, 22],
+            [20, 145, 224, 22],
         );
         d.combo(
             hwnd,
@@ -165,90 +250,103 @@ impl Panel {
                 d.text("Vecino más cercano", "Nearest neighbor"),
             ],
             0,
-            [140, 219, 270, 144],
+            [20, 201, 229, 122],
         );
+
+        for (index, &(label, _, _)) in PRESETS.iter().enumerate() {
+            d.button(
+                hwnd,
+                PRESET + index as i32,
+                label,
+                BS_PUSHBUTTON,
+                [
+                    284 + (index % 2) as i32 * 119,
+                    26 + (index / 2) as i32 * 26,
+                    113,
+                    22,
+                ],
+            );
+        }
+        d.divider(hwnd, 284, 108, 232);
+        d.button(
+            hwnd,
+            HALF,
+            d.text("Mitad", "Half"),
+            BS_PUSHBUTTON,
+            [284, 119, 113, 23],
+        );
+        d.button(
+            hwnd,
+            DOUBLE,
+            d.text("Doble", "Double"),
+            BS_PUSHBUTTON,
+            [403, 119, 113, 23],
+        );
+        d.label(
+            hwnd,
+            0,
+            d.text(
+                "Con la proporción activa, la imagen se ajusta al tamaño elegido.",
+                "With aspect ratio locked, the image fits within the selected size.",
+            ),
+            [284, 158, 228, 44],
+        );
+        width
     }
 
-    fn create_canvas(&self, hwnd: HWND, d: &Dialog) {
-        for (i, (label, id)) in [
-            (d.text("Izquierda", "Left"), LEFT),
-            (d.text("Derecha", "Right"), RIGHT),
-            (d.text("Arriba", "Top"), TOP),
-            (d.text("Abajo", "Bottom"), BOTTOM),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let x = if i % 2 == 0 { 22 } else { 272 };
-            let y = 102 + (i / 2) as i32 * 37;
-            d.label(hwnd, MARGIN_LABELS[i], label, [x, y + 4, 112, 22]);
-            d.input(hwnd, id, "0", [x + 118, y, 106, 25]);
-        }
+    fn mode(&self, hwnd: HWND, d: &Dialog, id: i32, title: &str, bounds: [i32; 4]) {
+        let mode = d.radio(
+            hwnd,
+            id,
+            title,
+            WS_TABSTOP | WINDOW_STYLE(BS_RADIOBUTTON as u32),
+            bounds,
+        );
+        send(mode, BM_SETCHECK, usize::from(id == MODE));
+    }
+
+    fn dimension_fields(&self, hwnd: HWND, d: &Dialog, x: i32, y: i32, spacing: i32) -> HWND {
         d.label(
             hwnd,
-            SIZE_LABELS[2],
-            d.text("Posición de la imagen", "Image position"),
-            [22, 151, 143, 22],
+            SIZE_LABELS[0],
+            d.text("Ancho", "Width"),
+            [x, y + 2, 48, 18],
         );
-        d.combo(
+        let width = d.input(
             hwnd,
-            ANCHOR,
-            &[
-                d.text("Superior izquierda", "Top left"),
-                d.text("Superior centro", "Top center"),
-                d.text("Superior derecha", "Top right"),
-                d.text("Centro izquierda", "Center left"),
-                d.text("Centro", "Center"),
-                d.text("Centro derecha", "Center right"),
-                d.text("Inferior izquierda", "Bottom left"),
-                d.text("Inferior centro", "Bottom center"),
-                d.text("Inferior derecha", "Bottom right"),
-            ],
-            4,
-            [172, 147, 206, 224],
+            WIDTH_INPUT,
+            &self.original.0.to_string(),
+            [x + 49, y, 62, 20],
         );
         d.label(
             hwnd,
-            ANCHOR_LABEL,
-            d.text(
-                "Los márgenes negativos recortan la imagen.",
-                "Negative margins crop the image.",
-            ),
-            [22, 176, 474, 22],
+            SIZE_LABELS[1],
+            d.text("Alto", "Height"),
+            [x + spacing, y + 2, 43, 18],
         );
-        d.checkbox(
+        d.input(
             hwnd,
-            TRANSPARENT_FILL,
-            d.text("Relleno transparente", "Transparent fill"),
-            true,
-            [22, 218, 210, 25],
+            HEIGHT_INPUT,
+            &self.original.1.to_string(),
+            [x + spacing + 44, y, 62, 20],
         );
-        d.label(
-            hwnd,
-            COLOR_LABEL,
-            d.text("Color hexadecimal", "Hex color"),
-            [247, 220, 133, 22],
-        );
-        d.input(hwnd, COLOR, "#000000", [390, 216, 106, 25]);
-        self.show_canvas_mode(hwnd);
+        width
     }
 
     fn show_canvas_mode(&self, hwnd: HWND) {
-        let margins = selected(hwnd, MODE) == 1;
-        for id in [WIDTH_INPUT, HEIGHT_INPUT, ANCHOR]
+        let margins = checked(hwnd, MODE_ALT);
+        for id in [WIDTH_INPUT, HEIGHT_INPUT]
             .into_iter()
             .chain(SIZE_LABELS)
+            .chain(ANCHOR..ANCHOR + 9)
         {
             unsafe {
-                let _ = ShowWindow(control(hwnd, id), if margins { SW_HIDE } else { SW_SHOW });
+                let _ = EnableWindow(control(hwnd, id), !margins);
             }
         }
-        for id in [LEFT, RIGHT, TOP, BOTTOM, ANCHOR_LABEL]
-            .into_iter()
-            .chain(MARGIN_LABELS)
-        {
+        for id in [LEFT, RIGHT, TOP, BOTTOM].into_iter().chain(MARGIN_LABELS) {
             unsafe {
-                let _ = ShowWindow(control(hwnd, id), if margins { SW_SHOW } else { SW_HIDE });
+                let _ = EnableWindow(control(hwnd, id), margins);
             }
         }
     }
@@ -258,17 +356,24 @@ impl Panel {
             self.result = self.operation(hwnd).ok().flatten();
             return self.result.is_some();
         }
+        let method_changed = matches!(id, MODE | MODE_ALT) && notification == BN_CLICKED;
+        if method_changed {
+            send(control(hwnd, MODE), BM_SETCHECK, usize::from(id == MODE));
+            send(
+                control(hwnd, MODE_ALT),
+                BM_SETCHECK,
+                usize::from(id == MODE_ALT),
+            );
+        }
         match self.tool {
-            SizeTool::Canvas if id == MODE && notification == CBN_SELCHANGE => {
-                self.show_canvas_mode(hwnd)
-            }
-            SizeTool::Resize if id == MODE && notification == CBN_SELCHANGE => {
+            SizeTool::Canvas if method_changed => self.show_canvas_mode(hwnd),
+            SizeTool::Resize if method_changed && self.percent != (id == MODE_ALT) => {
                 let size = self.resize_dimensions(hwnd).unwrap_or(self.original);
-                self.percent = selected(hwnd, MODE) == 1;
+                self.percent = id == MODE_ALT;
                 self.set_size(hwnd, size);
             }
-            SizeTool::Resize if id == PRESET && notification == CBN_SELCHANGE => {
-                self.apply_preset(hwnd);
+            SizeTool::Resize if (PRESET..=DOUBLE).contains(&id) && notification == BN_CLICKED => {
+                self.apply_preset(hwnd, id);
             }
             SizeTool::Resize
                 if id == LOCK
@@ -365,7 +470,7 @@ impl Panel {
 
     fn canvas_dimensions(&self, hwnd: HWND) -> Option<((u32, u32), (i32, i32))> {
         let (width, height) = self.original;
-        let result = if selected(hwnd, MODE) == 1 {
+        let result = if checked(hwnd, MODE_ALT) {
             let read = |id| value(hwnd, id).trim().parse::<i32>().ok().map(i64::from);
             let (left, right, top, bottom) = (read(LEFT)?, read(RIGHT)?, read(TOP)?, read(BOTTOM)?);
             let size = (
@@ -381,7 +486,7 @@ impl Panel {
             if !editable_size(size) {
                 return None;
             }
-            let anchor = selected(hwnd, ANCHOR);
+            let anchor = (0..9).find(|i| checked(hwnd, ANCHOR + i)).unwrap_or(4);
             let shift = |delta: i32, align| match align {
                 0 => 0,
                 1 => delta.div_euclid(2),
@@ -480,19 +585,17 @@ impl Panel {
         }
     }
 
-    fn apply_preset(&mut self, hwnd: HWND) {
+    fn apply_preset(&mut self, hwnd: HWND, id: i32) {
         let (w, h) = self.original;
-        let size = match selected(hwnd, PRESET) {
-            0 => return,
-            1 => (w.div_ceil(2), h.div_ceil(2)),
-            2 => (w * 2, h * 2),
-            n => {
-                let (_, width, height) = PRESETS[n - 3];
+        let size = match id {
+            HALF => (w.div_ceil(2), h.div_ceil(2)),
+            DOUBLE => (w * 2, h * 2),
+            _ => {
+                let (_, width, height) = PRESETS[(id - PRESET) as usize];
                 (width, height)
             }
         };
         self.set_size(hwnd, size);
-        send(control(hwnd, PRESET), CB_SETCURSEL, 0);
     }
 }
 

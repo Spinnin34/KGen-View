@@ -332,7 +332,7 @@ impl AppState {
             description,
             api_key: self.settings.imgbb_api_key.clone(),
         };
-        let Some(edit) = crate::platform::properties_dialog::show(
+        let Some(edit) = crate::platform::image_tools::show_properties(
             self.hwnd,
             self.settings.is_dark(),
             self.lang(),

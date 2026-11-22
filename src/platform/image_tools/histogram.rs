@@ -7,7 +7,7 @@ use windows::Win32::{
     },
 };
 
-pub(super) const HEIGHT: i32 = 430;
+pub(super) const CLIENT: (i32, i32) = (414, 357);
 const CHANNELS: [i32; 4] = [300, 301, 302, 303];
 const LOG_SCALE: i32 = 304;
 const SLIDER: i32 = 305;
@@ -46,7 +46,7 @@ impl Panel {
                 CHANNELS[i],
                 caption,
                 true,
-                [22 + i as i32 * 80, 12, if i == 3 { 111 } else { 76 }, 24],
+                [10 + i as i32 * 56, 9, if i == 3 { 98 } else { 56 }, 20],
             );
         }
         d.checkbox(
@@ -54,16 +54,16 @@ impl Panel {
             LOG_SCALE,
             d.text("Escala logarítmica", "Log scale"),
             false,
-            [378, 12, 145, 24],
+            [278, 9, 128, 20],
         );
         for (x, label) in [
-            (22, "0"),
-            (141, "64"),
-            (259, "128"),
-            (382, "192"),
-            (488, "255"),
+            (10, "0"),
+            (102, "64"),
+            (195, "128"),
+            (294, "192"),
+            (382, "255"),
         ] {
-            d.label(hwnd, 0, label, [x, 211, 30, 20]);
+            d.label(hwnd, 0, label, [x, 184, 27, 17]);
         }
         unsafe {
             let _ = InitCommonControlsEx(&INITCOMMONCONTROLSEX {
@@ -77,13 +77,13 @@ impl Panel {
             TRACKBAR_CLASSW,
             "",
             WS_TABSTOP | WINDOW_STYLE(TBS_NOTICKS),
-            [16, 229, 504, 25],
+            [4, 202, 406, 21],
         );
         unsafe {
             SendMessageW(slider, TBM_SETRANGEMAX, Some(WPARAM(1)), Some(LPARAM(255)));
         }
         set_slider(slider, self.bin);
-        d.label(hwnd, BIN, "", [22, 265, 196, 22]);
+        d.label(hwnd, BIN, "", [10, 231, 103, 18]);
         d.label(
             hwnd,
             0,
@@ -93,26 +93,27 @@ impl Panel {
                 count(d, self.data.visible),
                 count(d, self.data.pixels)
             ),
-            [232, 265, 284, 22],
+            [116, 231, 288, 18],
         );
+        d.divider(hwnd, 10, 252, 394);
         d.label(
             hwnd,
             0,
             d.text("Recuento", "Pixel count"),
-            [22, 316, 104, 20],
+            [10, 276, 81, 18],
         );
         d.label(
             hwnd,
             0,
             d.text("Porcentaje", "Percentage"),
-            [22, 340, 104, 20],
+            [10, 294, 81, 18],
         );
-        d.label(hwnd, 0, d.text("Media", "Mean"), [22, 364, 104, 20]);
+        d.label(hwnd, 0, d.text("Media", "Mean"), [10, 312, 81, 18]);
         for (i, caption) in channels.iter().enumerate() {
-            let x = 133 + i as i32 * 96;
-            d.label(hwnd, 0, caption, [x, 294, 95, 20]);
-            d.label(hwnd, COUNTS + i as i32, "", [x, 316, 96, 20]);
-            d.label(hwnd, SHARES + i as i32, "", [x, 340, 96, 20]);
+            let x = 93 + i as i32 * 78;
+            d.label(hwnd, 0, caption, [x, 258, 77, 18]);
+            d.label(hwnd, COUNTS + i as i32, "", [x, 276, 77, 18]);
+            d.label(hwnd, SHARES + i as i32, "", [x, 294, 77, 18]);
             let mean = if self.data.visible == 0 {
                 "—".into()
             } else {
@@ -123,14 +124,14 @@ impl Panel {
                     .sum();
                 decimal(d, sum as f64 / self.data.visible as f64)
             };
-            d.label(hwnd, 0, &mean, [x, 364, 95, 20]);
+            d.label(hwnd, 0, &mean, [x, 312, 77, 18]);
         }
         let close = d.button(
             hwnd,
             ACCEPT,
             d.text("Cerrar", "Close"),
             BS_DEFPUSHBUTTON,
-            [412, 389, 102, 29],
+            [318, 330, 86, 22],
         );
         self.update_stats(hwnd, d);
         close
@@ -157,7 +158,7 @@ impl Panel {
             let rect = plot(d);
             let x = lparam.0 as u16 as i16 as i32;
             let y = (lparam.0 >> 16) as u16 as i16 as i32;
-            if x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom {
+            if x < rect.left || x >= rect.right || y < rect.top || y >= grayscale(d).bottom {
                 return;
             }
             let width = (rect.right - rect.left - 1).max(1);
@@ -198,9 +199,10 @@ impl Panel {
 
     pub fn paint(&self, dc: HDC, d: &Dialog) {
         let rect = plot(d);
+        draw_grayscale(dc, grayscale(d));
         let palette = if d.dark {
             [
-                0x006b6bff, 0x007bdb66, 0x00ffa072, 0x00c1c1c1, 0x00151413, 0x0046423e, 0x008a8783,
+                0x006666ff, 0x0074ed69, 0x00ffaf83, 0x00e2e2e2, 0x00303030, 0x004b4b4b, 0x00929292,
             ]
         } else {
             [
@@ -290,7 +292,44 @@ impl Panel {
 }
 
 fn plot(d: &Dialog) -> RECT {
-    d.rect(22, 47, 492, 160)
+    d.rect(10, 38, 394, 127)
+}
+
+fn grayscale(d: &Dialog) -> RECT {
+    d.rect(10, 172, 394, 9)
+}
+
+fn draw_grayscale(dc: HDC, rect: RECT) {
+    let pixels: [u32; 256] = std::array::from_fn(|index| index as u32 * 0x010101);
+    let info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: 256,
+            biHeight: 1,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    unsafe {
+        StretchDIBits(
+            dc,
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            0,
+            0,
+            256,
+            1,
+            Some(pixels.as_ptr().cast()),
+            &info,
+            DIB_RGB_COLORS,
+            SRCCOPY,
+        );
+    }
 }
 
 fn count(d: &Dialog, value: u64) -> String {

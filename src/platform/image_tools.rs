@@ -8,7 +8,7 @@ use windows::{
         UI::{
             Controls::{EM_SETLIMITTEXT, EM_SETSEL, SetWindowTheme},
             HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow},
-            Input::KeyboardAndMouse::{EnableWindow, SetFocus},
+            Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
             WindowsAndMessaging::*,
         },
     },
@@ -22,13 +22,16 @@ use crate::{
 };
 
 mod histogram;
+mod properties;
 mod size;
+pub use properties::{PropertiesData, PropertiesEdit};
 pub use size::SizeTool;
 
 const CLASS: PCWSTR = w!("KGenViewImageTools");
-const WIDTH: i32 = 536;
 const ACCEPT: i32 = IDOK.0;
 const CANCEL: i32 = IDCANCEL.0;
+const SS_ETCHEDHORZ: WINDOW_STYLE = WINDOW_STYLE(0x10);
+const SS_NOPREFIX: WINDOW_STYLE = WINDOW_STYLE(0x80);
 
 pub fn show_size(
     owner: HWND,
@@ -42,17 +45,55 @@ pub fn show_size(
         SizeTool::Resize => Text::ResizeImage,
     };
     let body = Body::Size(size::Panel::new(tool, dimensions));
-    show(owner, language, dark, text, body)
+    match show(
+        owner,
+        language,
+        dark,
+        tr(language, text).trim_end_matches('…'),
+        body,
+    )? {
+        DialogResult::Size(edit) => Some(edit),
+        DialogResult::Properties(_) => None,
+    }
 }
 
 pub fn show_histogram(owner: HWND, language: Language, dark: bool, data: Box<Histogram>) {
     let body = Body::Histogram(histogram::Panel::new(data));
-    show(owner, language, dark, Text::Histogram, body);
+    show(
+        owner,
+        language,
+        dark,
+        tr(language, Text::Histogram).trim_end_matches('…'),
+        body,
+    );
+}
+
+pub fn show_properties(
+    owner: HWND,
+    dark: bool,
+    language: Language,
+    data: PropertiesData,
+) -> Option<PropertiesEdit> {
+    let title = match language {
+        Language::Spanish => "KGen View — Propiedades de la imagen",
+        Language::English => "KGen View — Image properties",
+    };
+    let body = Body::Properties(Box::new(properties::Panel::new(data)));
+    match show(owner, language, dark, title, body)? {
+        DialogResult::Properties(edit) => Some(edit),
+        DialogResult::Size(_) => None,
+    }
 }
 
 enum Body {
     Size(size::Panel),
     Histogram(histogram::Panel),
+    Properties(Box<properties::Panel>),
+}
+
+enum DialogResult {
+    Size(EditOperation),
+    Properties(PropertiesEdit),
 }
 
 struct Dialog {
@@ -79,9 +120,9 @@ fn show(
     owner: HWND,
     language: Language,
     dark: bool,
-    title: Text,
+    title: &str,
     body: Body,
-) -> Option<EditOperation> {
+) -> Option<DialogResult> {
     let instance = unsafe { GetModuleHandleW(None).ok()? }.into();
     unsafe {
         RegisterClassExW(&WNDCLASSEXW {
@@ -93,11 +134,31 @@ fn show(
             ..Default::default()
         });
     }
-    let dpi = unsafe { GetDpiForWindow(owner) }.max(96);
-    let height = match &body {
-        Body::Size(_) => size::HEIGHT,
-        Body::Histogram(_) => histogram::HEIGHT,
+    let window_dpi = unsafe { GetDpiForWindow(owner) }.max(96);
+    let (client_w, client_h) = match &body {
+        Body::Size(panel) => panel.client_size(),
+        Body::Histogram(_) => histogram::CLIENT,
+        Body::Properties(_) => properties::CLIENT,
     };
+    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
+    let ex_style = WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT;
+    let mut frame = RECT::default();
+    unsafe { AdjustWindowRectExForDpi(&mut frame, style, false, ex_style, window_dpi).ok()? };
+    let (frame_w, frame_h) = (frame.right - frame.left, frame.bottom - frame.top);
+    let mut owner_rect = RECT::default();
+    let monitor = unsafe { MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST) };
+    let mut monitor_info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe {
+        GetWindowRect(owner, &mut owner_rect).ok()?;
+        if !GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
+            return None;
+        }
+    }
+    let work = monitor_info.rcWork;
+    let dpi = fit_layout_dpi(window_dpi, (client_w, client_h), (frame_w, frame_h), work);
     let (background, input) = colors(dark);
     let dialog = Box::new(Dialog {
         body: RefCell::new(body),
@@ -108,7 +169,7 @@ fn show(
         input: unsafe { CreateSolidBrush(input) },
         font: unsafe {
             CreateFontW(
-                -(14 * dpi as i32 / 96),
+                -(13 * dpi as i32 / 96).max(1),
                 0,
                 0,
                 0,
@@ -125,27 +186,12 @@ fn show(
             )
         },
     });
-    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
-    let ex_style = WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT;
-    let mut rect = dialog.rect(0, 0, WIDTH, height);
-    unsafe { AdjustWindowRectExForDpi(&mut rect, style, false, ex_style, dpi).ok()? };
-    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
-    let mut owner_rect = RECT::default();
-    let monitor = unsafe { MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST) };
-    let mut monitor_info = MONITORINFO {
-        cbSize: size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
-    unsafe {
-        let _ = GetWindowRect(owner, &mut owner_rect);
-        let _ = GetMonitorInfoW(monitor, &mut monitor_info);
-    }
-    let work = monitor_info.rcWork;
+    let (width, height) = (dialog.px(client_w) + frame_w, dialog.px(client_h) + frame_h);
     let x = ((owner_rect.left + owner_rect.right - width) / 2)
         .clamp(work.left, (work.right - width).max(work.left));
     let y = ((owner_rect.top + owner_rect.bottom - height) / 2)
         .clamp(work.top, (work.bottom - height).max(work.top));
-    let title = wide(tr(language, title).trim_end_matches('…'));
+    let title = wide(title);
     let hwnd = unsafe {
         CreateWindowExW(
             ex_style,
@@ -168,6 +214,7 @@ fn show(
         match &mut *body {
             Body::Size(panel) => panel.create(hwnd, &dialog),
             Body::Histogram(panel) => panel.create(hwnd, &dialog),
+            Body::Properties(panel) => panel.create(hwnd, &dialog),
         }
     };
     unsafe {
@@ -199,9 +246,10 @@ fn show(
         let _ = EnableWindow(owner, true);
         let _ = SetForegroundWindow(owner);
     }
-    match &*dialog.body.borrow() {
-        Body::Size(panel) => panel.result,
+    match &mut *dialog.body.borrow_mut() {
+        Body::Size(panel) => panel.result.take().map(DialogResult::Size),
         Body::Histogram(_) => None,
+        Body::Properties(panel) => panel.result.take().map(DialogResult::Properties),
     }
 }
 
@@ -234,6 +282,7 @@ unsafe extern "system" fn window_proc(
                 let close = match &mut *body {
                     Body::Size(panel) => panel.command(hwnd, dialog, id, notification),
                     Body::Histogram(panel) => panel.command(hwnd, dialog, id),
+                    Body::Properties(panel) => panel.command(hwnd, id),
                 };
                 if close {
                     unsafe {
@@ -266,16 +315,19 @@ unsafe extern "system" fn window_proc(
         }
         WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX | WM_CTLCOLORBTN => {
             let dc = HDC(wparam.0 as *mut c_void);
+            let child = HWND(lparam.0 as *mut c_void);
             let (background, input) = colors(dialog.dark);
             let is_input = matches!(message, WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX);
+            let disabled = !unsafe { IsWindowEnabled(child).as_bool() };
             unsafe {
                 SetTextColor(
                     dc,
-                    if dialog.dark {
-                        COLORREF(0x00eeeeee)
-                    } else {
-                        COLORREF(0x001b1b1b)
-                    },
+                    COLORREF(match (dialog.dark, disabled) {
+                        (true, false) => 0x00eeeeee,
+                        (false, false) => 0x001b1b1b,
+                        (true, true) => 0x00989898,
+                        (false, true) => 0x00686868,
+                    }),
                 );
                 SetBkColor(dc, if is_input { input } else { background });
             }
@@ -299,10 +351,20 @@ unsafe extern "system" fn window_proc(
 
 fn colors(dark: bool) -> (COLORREF, COLORREF) {
     if dark {
-        (COLORREF(0x00201e1c), COLORREF(0x002e2c2a))
+        (COLORREF(0x00202020), COLORREF(0x002a2a2a))
     } else {
         (COLORREF(0x00f7f7f7), COLORREF(0x00ffffff))
     }
+}
+
+fn fit_layout_dpi(dpi: u32, client: (i32, i32), frame: (i32, i32), work: RECT) -> u32 {
+    let available_w = (work.right - work.left - frame.0).max(1);
+    let available_h = (work.bottom - work.top - frame.1).max(1);
+    dpi.min(
+        (available_w * 96 / client.0)
+            .min(available_h * 96 / client.1)
+            .max(1) as u32,
+    )
 }
 
 impl Dialog {
@@ -344,8 +406,8 @@ impl Dialog {
                 WS_CHILD | WS_VISIBLE | style,
                 self.px(x),
                 self.px(y),
-                self.px(width),
-                self.px(height),
+                self.px(x + width) - self.px(x),
+                self.px(y + height) - self.px(y),
                 Some(owner),
                 (id != 0).then_some(HMENU(id as usize as *mut c_void)),
                 None,
@@ -373,14 +435,22 @@ impl Dialog {
     }
 
     fn label(&self, owner: HWND, id: i32, title: &str, bounds: [i32; 4]) -> HWND {
+        self.control(owner, id, w!("STATIC"), title, SS_NOPREFIX, bounds)
+    }
+
+    fn group(&self, owner: HWND, title: &str, bounds: [i32; 4]) {
         self.control(
             owner,
-            id,
-            w!("STATIC"),
+            0,
+            w!("BUTTON"),
             title,
-            WINDOW_STYLE::default(),
+            WINDOW_STYLE(BS_GROUPBOX as u32) | WS_CLIPSIBLINGS,
             bounds,
-        )
+        );
+    }
+
+    fn divider(&self, owner: HWND, x: i32, y: i32, width: i32) {
+        self.control(owner, 0, w!("STATIC"), "", SS_ETCHEDHORZ, [x, y, width, 2]);
     }
 
     fn input(&self, owner: HWND, id: i32, value: &str, bounds: [i32; 4]) -> HWND {
@@ -443,6 +513,17 @@ impl Dialog {
         send(handle, BM_SETCHECK, usize::from(checked));
         handle
     }
+
+    fn radio(
+        &self,
+        owner: HWND,
+        id: i32,
+        title: &str,
+        style: WINDOW_STYLE,
+        bounds: [i32; 4],
+    ) -> HWND {
+        self.control(owner, id, w!("BUTTON"), title, style, bounds)
+    }
 }
 
 fn control(hwnd: HWND, id: i32) -> HWND {
@@ -474,5 +555,27 @@ fn set_text(hwnd: HWND, text: &str) {
     let text = wide(text);
     unsafe {
         let _ = SetWindowTextW(hwnd, PCWSTR(text.as_ptr()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_properties_fit_work_area_with_window_frame_at_high_dpi() {
+        let screen = RECT {
+            left: -1280,
+            top: 0,
+            right: 0,
+            bottom: 720,
+        };
+        let frame = (24, 58);
+        let dpi = fit_layout_dpi(144, properties::CLIENT, frame, screen);
+        assert!(dpi < 144);
+        let pixels = |dimension| (dimension * dpi as i32 + 48) / 96;
+        assert!(pixels(properties::CLIENT.0) + frame.0 <= screen.right - screen.left);
+        assert!(pixels(properties::CLIENT.1) + frame.1 <= screen.bottom - screen.top);
+        assert_eq!(fit_layout_dpi(96, properties::CLIENT, frame, screen), 96);
     }
 }

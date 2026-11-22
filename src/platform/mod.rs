@@ -8,7 +8,6 @@ pub mod image_tools;
 pub mod imgbb;
 pub mod menu;
 pub mod playback;
-pub mod properties_dialog;
 pub mod screenshot;
 pub mod text;
 pub mod theme;

@@ -82,9 +82,9 @@ use crate::{
     mailbox::Mailbox,
     platform::{
         clipboard::copy_text,
+        image_tools::{PropertiesData, PropertiesEdit},
         imgbb,
         menu::ThemedMenu,
-        properties_dialog::{PropertiesData, PropertiesEdit},
         text::{format_bytes, nul_pos, wide, wide_with_nuls},
         theme::apply_window_theme,
         updater::{self, UpdateEvent, UpdateInfo},
