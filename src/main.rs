@@ -4,6 +4,7 @@ mod app;
 mod catalog;
 mod commands;
 mod diagnostics;
+mod formats;
 mod i18n;
 mod imaging;
 mod mailbox;

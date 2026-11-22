@@ -124,6 +124,8 @@ Las instalaciones hechas con el instalador comprueban GitHub al abrirse. Cada su
 
 El instalador `KGenView-Setup-x64.exe` instala la aplicación en el perfil del usuario sin permisos de administrador y la ofrece en **Abrir con** para imágenes, ZIP, CBZ y formatos de vídeo como MP4, MKV, WebM, MOV y AVI.
 
+El Explorador usa los iconos de KGen View cuando la aplicación está seleccionada como predeterminada para esa extensión. Al actualizar, Windows conserva las asociaciones anteriores. Si una extensión sigue mostrando el icono de su grupo, vuelve a seleccionar KGen View para esa extensión en **Configuración → Aplicaciones → Aplicaciones predeterminadas**.
+
 Si estás usando una compilación local, el script de release genera estos archivos en `dist\`:
 
 ```text

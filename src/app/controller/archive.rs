@@ -12,6 +12,7 @@ use std::{
 
 use crate::{
     catalog::{is_supported, natural_cmp},
+    formats::ARCHIVE_EXTENSIONS,
     i18n::Language,
     imaging::{ImageError, ImageResult},
 };
@@ -73,7 +74,11 @@ struct ArchiveEntry {
 pub(super) fn is_archive_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "zip" | "cbz"))
+        .is_some_and(|extension| {
+            ARCHIVE_EXTENSIONS
+                .iter()
+                .any(|supported| extension.eq_ignore_ascii_case(supported))
+        })
 }
 
 impl ArchiveSession {

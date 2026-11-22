@@ -7,10 +7,8 @@ use std::{
     sync::Arc,
 };
 
-const EXTENSIONS: &[&str] = &[
-    "bmp", "dib", "jpg", "jpeg", "jpe", "png", "gif", "tif", "tiff", "ico", "webp", "heic", "heif",
-    "jxl", "wdp", "jxr", "hdp", "dds", "svg",
-];
+use crate::formats::IMAGE_EXTENSIONS;
+pub use crate::formats::VIDEO_EXTENSIONS;
 
 #[derive(Default, Debug, Clone)]
 pub struct FolderCatalog {
@@ -187,18 +185,12 @@ pub fn is_supported(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
         .map(|value| {
-            EXTENSIONS
+            IMAGE_EXTENSIONS
                 .iter()
                 .any(|extension| value.eq_ignore_ascii_case(extension))
         })
         .unwrap_or(false)
 }
-
-pub const VIDEO_EXTENSIONS: &[&str] = &[
-    "3g2", "3gp", "3gpp", "asf", "avi", "divx", "dv", "f4v", "flv", "h264", "h265", "hevc", "m1v",
-    "m2p", "m2t", "m2ts", "m2v", "m4v", "mkv", "mov", "mp4", "mpe", "mpeg", "mpg", "mpv", "mts",
-    "mxf", "nsv", "nut", "ogm", "ogv", "rm", "rmvb", "ts", "vob", "webm", "wmv", "wtv", "y4m",
-];
 
 pub fn is_video(path: &Path) -> bool {
     path.extension()
