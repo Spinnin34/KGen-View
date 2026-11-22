@@ -54,6 +54,7 @@ mod encoding;
 mod jxl;
 mod metadata;
 mod raster;
+mod raster_edits;
 mod svg;
 use decoding::color_managed_source;
 use encoding::{convert_encoder_source, valid_resolution};
@@ -73,9 +74,10 @@ mod view;
 mod wic_view;
 use crate::resources::PixelBuffer;
 use gif_source::decode_gif;
+pub use raster_edits::{Histogram, editable_size};
 pub use request::DecodeRequest;
 use view::{EditHistory, ViewTransform};
-pub use view::{EditOperation, fitted_size};
+pub use view::{EditOperation, ResampleFilter, fitted_size};
 use wic_view::prepare_wic_view;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,6 +212,7 @@ pub struct ImageDocument {
     pub source_lease: Option<Arc<dyn SourceLease>>,
     pub source: Option<ImageSource>,
     edits: EditHistory,
+    raster_cache: Option<raster_edits::RasterCache>,
 }
 
 impl ImageDocument {
@@ -224,6 +227,19 @@ impl ImageDocument {
     pub fn view_dimensions(&self) -> (u32, u32) {
         let view = ViewTransform::from_operations(self.original_size, &self.edits.operations);
         (view.width, view.height)
+    }
+
+    fn view_resolution(&self) -> (f64, f64) {
+        let rotations = self
+            .edits
+            .operations
+            .iter()
+            .filter(|op| matches!(op, EditOperation::RotateLeft | EditOperation::RotateRight));
+        if rotations.count() % 2 == 0 {
+            self.resolution_dpi
+        } else {
+            (self.resolution_dpi.1, self.resolution_dpi.0)
+        }
     }
 
     pub fn apply_edit(&mut self, operation: EditOperation) {
@@ -281,7 +297,11 @@ impl ImageDocument {
             source.verify()?;
         }
         request.operations = self.edits.operations.clone();
-        let mut rendered = Self::decode_request(&self.path, cancel, factory, &request)?;
+        let mut rendered = if request.operations.iter().any(EditOperation::is_raster) {
+            self.render_raster_edits(&request, cancel, factory)?
+        } else {
+            Self::decode_request(&self.path, cancel, factory, &request)?
+        };
         rendered.id = self.id;
         rendered.revision = self.revision;
         rendered.metadata = self.metadata.clone();
@@ -337,17 +357,7 @@ impl ImageDocument {
         self.frame_index = 0;
         self.source_lease = None;
         self.source = Some(ImageSource::open(path)?);
-        if self
-            .edits
-            .operations
-            .iter()
-            .filter(|op| matches!(op, EditOperation::RotateLeft | EditOperation::RotateRight))
-            .count()
-            % 2
-            != 0
-        {
-            self.resolution_dpi = (self.resolution_dpi.1, self.resolution_dpi.0);
-        }
+        self.resolution_dpi = self.view_resolution();
         self.file_size = fs::metadata(path).map(|value| value.len()).unwrap_or(0);
         self.format_name = extension.to_ascii_uppercase();
         self.metadata_dirty = false;
@@ -357,6 +367,7 @@ impl ImageDocument {
         }
         self.dirty = false;
         self.edits = EditHistory::default();
+        self.raster_cache = None;
         Ok(())
     }
 

@@ -1,12 +1,61 @@
 use super::*;
+use crate::platform::image_tools::{self, SizeTool};
 
 impl AppState {
+    pub(super) fn open_histogram(&mut self) {
+        if self.file_busy || self.load_started.is_some() {
+            return;
+        }
+        if let Some(document) = &self.document {
+            self.file_busy = self
+                .file_service
+                .submit(FileTask::Histogram(document.export_snapshot()));
+            if self.file_busy {
+                self.update_status(Some(if self.lang() == Language::Spanish {
+                    "Calculando histograma…"
+                } else {
+                    "Calculating histogram…"
+                }));
+            }
+        }
+    }
+
+    pub(super) fn open_size_tool(&mut self, tool: SizeTool) {
+        if self.file_busy || self.load_started.is_some() {
+            return;
+        }
+        let Some(document) = self.document.as_ref().map(ImageDocument::export_snapshot) else {
+            return;
+        };
+        let operation = image_tools::show_size(
+            self.hwnd,
+            self.lang(),
+            self.settings.is_dark(),
+            tool,
+            document.view_dimensions(),
+        );
+        if let Some(operation) = operation {
+            self.file_busy = self.file_service.submit(FileTask::EditImage {
+                document,
+                operation,
+            });
+            if self.file_busy {
+                self.update_status(Some(if self.lang() == Language::Spanish {
+                    "Aplicando cambios a la imagen…"
+                } else {
+                    "Applying image changes…"
+                }));
+            }
+        }
+    }
+
     pub(super) fn edit<F: FnOnce(&mut ImageDocument)>(&mut self, operation: F) {
         if self.file_busy || self.load_started.is_some() {
             return;
         }
         if let Some(document) = &mut self.document {
             operation(document);
+            self.crop_selection = None;
             let (width, height) = document.view_dimensions();
             self.center = (width as f32 / 2.0, height as f32 / 2.0);
             self.zoom_mode = ZoomMode::Fit;

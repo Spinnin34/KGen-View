@@ -122,6 +122,79 @@ fn visible_region_contains_native_detail_and_preserves_original_dimensions() {
 }
 
 #[test]
+fn canvas_margin_and_crop_survive_preview_history_and_png_export() {
+    let _com = Com::new();
+    let source = path("canvas", "png");
+    let output = path("canvas-result", "png");
+    let mut document = fixture(&source);
+    let second_source_pixel = document.current_frame().pixels[4..8].to_vec();
+    document.apply_edit(EditOperation::Canvas {
+        size: (10, 8),
+        offset: (-1, 1),
+        fill: [0; 4],
+    });
+    document.rotate_right();
+    let mut view = DecodeRequest::preview((3, 3));
+    view.region = Some((5, 0, 7, 2));
+    document = document.render_view(view, &|| false, None).unwrap();
+    assert_eq!(document.view_dimensions(), (8, 10));
+    assert_eq!(document.rendered_region, (5, 0, 7, 2));
+    assert_eq!(&document.current_frame().pixels[4..8], second_source_pixel);
+    assert!(document.undo());
+    assert!(document.undo());
+    assert_eq!(document.view_dimensions(), (8, 6));
+    assert!(document.redo());
+    assert!(document.redo());
+    document.save_as(&output).unwrap();
+    let exported = document
+        .render_view(DecodeRequest::original(0), &|| false, None)
+        .unwrap();
+    assert_eq!(exported.view_dimensions(), (8, 10));
+    assert_eq!(
+        &exported.current_frame().pixels[6 * 4..7 * 4],
+        second_source_pixel
+    );
+    assert_eq!(&exported.current_frame().pixels[7 * 4..8 * 4], [0; 4]);
+    fs::remove_file(source).unwrap();
+    fs::remove_file(output).unwrap();
+}
+
+#[test]
+fn resize_filters_materialize_and_histogram_uses_full_edited_resolution() {
+    let _com = Com::new();
+    let source = path("resize", "png");
+    let original = fixture(&source);
+    for filter in [
+        ResampleFilter::Nearest,
+        ResampleFilter::Linear,
+        ResampleFilter::Cubic,
+        ResampleFilter::Area,
+    ] {
+        let mut document = original.clone();
+        document.crop(0, 0, 1, 1);
+        document.apply_edit(EditOperation::Resize {
+            size: (12, 8),
+            filter,
+        });
+        document.apply_edit(EditOperation::Canvas {
+            size: (14, 10),
+            offset: (1, 1),
+            fill: [0; 4],
+        });
+        let preview = document
+            .render_view(DecodeRequest::preview((2, 2)), &|| false, None)
+            .unwrap();
+        assert_eq!(preview.view_dimensions(), (14, 10));
+        assert!(preview.current_frame().width < 14);
+        let histogram = preview.histogram(&|| false).unwrap();
+        assert_eq!(histogram.pixels, 140);
+        assert_eq!(histogram.visible, 96);
+        assert!(histogram.channels.iter().all(|channel| channel[0] == 96));
+    }
+    fs::remove_file(source).unwrap();
+}
+
+#[test]
 fn original_decode_fails_instead_of_silently_reducing_resolution() {
     let _com = Com::new();
     let source = path("limit", "png");

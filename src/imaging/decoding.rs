@@ -387,6 +387,7 @@ impl ImageDocument {
             source_lease: None,
             source: Some(image_source),
             edits: EditHistory::from_operations(request.operations.clone()),
+            raster_cache: None,
         })
     }
 }

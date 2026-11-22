@@ -31,6 +31,7 @@ pub(super) fn raster_document(
         source_lease: None,
         source: ImageSource::open(path).ok(),
         edits: EditHistory::from_operations(request.operations.clone()),
+        raster_cache: None,
     }
 }
 

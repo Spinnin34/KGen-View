@@ -141,6 +141,60 @@ impl AppState {
                     self.show_error(&error);
                 }
             },
+            FileResult::Histogram {
+                id,
+                revision,
+                result,
+            } => {
+                if self.pending_action.is_none()
+                    && self
+                        .document
+                        .as_ref()
+                        .is_some_and(|doc| doc.id == id && doc.revision == revision)
+                {
+                    match result {
+                        Ok(histogram) => {
+                            self.update_status(None);
+                            crate::platform::image_tools::show_histogram(
+                                self.hwnd,
+                                self.lang(),
+                                self.settings.is_dark(),
+                                histogram,
+                            );
+                        }
+                        Err(error) => self.show_error(&error),
+                    }
+                }
+            }
+            FileResult::Edited {
+                id,
+                revision,
+                result,
+            } => {
+                if self
+                    .document
+                    .as_ref()
+                    .is_some_and(|doc| doc.id == id && doc.revision == revision)
+                {
+                    match result {
+                        Ok(document) => {
+                            let (width, height) = document.view_dimensions();
+                            self.center = (width as f32 / 2.0, height as f32 / 2.0);
+                            self.zoom_mode = ZoomMode::Fit;
+                            self.crop_selection = None;
+                            self.requested_page = document.frame_index;
+                            self.document = Some(*document);
+                            self.update_title();
+                            self.invalidate_image();
+                            self.request_view();
+                        }
+                        Err(error) => {
+                            success = false;
+                            self.show_error(&error);
+                        }
+                    }
+                }
+            }
             FileResult::Deleted { path, result } => match result {
                 Ok(true) => {
                     let index = self.catalog.index.unwrap_or(0);

@@ -138,6 +138,11 @@ impl ThemedMenu {
             self.item(edit, cmd::COPY, tr(language, Text::Copy))?;
             self.item(edit, cmd::COPY_URL, "Copiar enlace directo (ImgBB)")?;
             self.item(edit, cmd::CROP, tr(language, Text::Crop))?;
+            AppendMenuW(edit, MF_SEPARATOR, 0, None)?;
+            self.item(edit, cmd::HISTOGRAM, tr(language, Text::Histogram))?;
+            self.item(edit, cmd::CANVAS_SIZE, tr(language, Text::CanvasSize))?;
+            self.item(edit, cmd::RESIZE, tr(language, Text::ResizeImage))?;
+            AppendMenuW(edit, MF_SEPARATOR, 0, None)?;
             self.item(
                 edit,
                 cmd::CONVERT_IMAGE,

@@ -4,6 +4,7 @@
 pub mod clipboard;
 pub mod conversion_dialog;
 pub mod explorer;
+pub mod image_tools;
 pub mod imgbb;
 pub mod menu;
 pub mod playback;

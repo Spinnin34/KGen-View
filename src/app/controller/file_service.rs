@@ -1,6 +1,6 @@
 //! Serialized explicit file operations. Requests are never silently replaced.
 use crate::{
-    imaging::{DecodeRequest, DocumentId, ExportFormat, ImageDocument},
+    imaging::{DecodeRequest, DocumentId, EditOperation, ExportFormat, Histogram, ImageDocument},
     mailbox::Mailbox,
     platform::clipboard::PreparedImage,
 };
@@ -30,6 +30,11 @@ pub(super) enum FileTask {
         format: ExportFormat,
     },
     Copy(ImageDocument),
+    Histogram(ImageDocument),
+    EditImage {
+        document: ImageDocument,
+        operation: EditOperation,
+    },
     Delete(PathBuf),
     Rename {
         id: DocumentId,
@@ -49,6 +54,16 @@ pub(super) enum FileResult {
         result: Result<(), String>,
     },
     Copied(Result<PreparedImage, String>),
+    Histogram {
+        id: DocumentId,
+        revision: u64,
+        result: Result<Box<Histogram>, String>,
+    },
+    Edited {
+        id: DocumentId,
+        revision: u64,
+        result: Result<Box<ImageDocument>, String>,
+    },
     Renamed {
         id: DocumentId,
         path: PathBuf,
@@ -154,6 +169,36 @@ impl FileService {
                                     })
                                     .map_err(|e| e.to_string());
                                 FileResult::Copied(result)
+                            }
+                            FileTask::Histogram(document) => FileResult::Histogram {
+                                id: document.id,
+                                revision: document.revision,
+                                result: document
+                                    .histogram(&|| stopping.load(Ordering::Acquire))
+                                    .map(Box::new)
+                                    .map_err(|error| error.to_string()),
+                            },
+                            FileTask::EditImage {
+                                mut document,
+                                operation,
+                            } => {
+                                let (id, revision) = (document.id, document.revision);
+                                document.apply_edit(operation);
+                                let mut request = DecodeRequest::preview((1920, 1080));
+                                request.page = document.frame_index;
+                                let result = document
+                                    .render_view(
+                                        request,
+                                        &|| stopping.load(Ordering::Acquire),
+                                        None,
+                                    )
+                                    .map(Box::new)
+                                    .map_err(|error| error.to_string());
+                                FileResult::Edited {
+                                    id,
+                                    revision,
+                                    result,
+                                }
                             }
                             FileTask::Rename { id, from, to } => {
                                 let from = crate::imaging::wide_path(&from);

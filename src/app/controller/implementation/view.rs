@@ -69,7 +69,7 @@ impl AppState {
         let Some(document) = &self.document else {
             return;
         };
-        if document.frame_count() <= 1 || self.load_started.is_some() {
+        if document.frame_count() <= 1 || self.load_started.is_some() || self.file_busy {
             return;
         }
         unsafe {

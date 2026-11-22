@@ -73,18 +73,7 @@ impl ImageDocument {
         } else {
             GUID_WICPixelFormat32bppPBGRA
         };
-        let mut dpi = valid_resolution(self.resolution_dpi);
-        if self
-            .edits
-            .operations
-            .iter()
-            .filter(|op| matches!(op, EditOperation::RotateLeft | EditOperation::RotateRight))
-            .count()
-            % 2
-            != 0
-        {
-            dpi = (dpi.1, dpi.0);
-        }
+        let dpi = valid_resolution(self.view_resolution());
         unsafe {
             encoded.Initialize(options.as_ref())?;
             encoded.SetSize(width, height)?;

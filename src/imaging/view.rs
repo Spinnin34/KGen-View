@@ -1,4 +1,12 @@
-//! Lossless geometry history in original-image coordinates.
+//! Edit history and the coordinate mapping for lossless geometry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResampleFilter {
+    Nearest,
+    Linear,
+    Cubic,
+    Area,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditOperation {
     RotateRight,
@@ -6,6 +14,21 @@ pub enum EditOperation {
     FlipHorizontal,
     FlipVertical,
     Crop(u32, u32, u32, u32),
+    Canvas {
+        size: (u32, u32),
+        offset: (i32, i32),
+        fill: [u8; 4], // Premultiplied BGRA.
+    },
+    Resize {
+        size: (u32, u32),
+        filter: ResampleFilter,
+    },
+}
+
+impl EditOperation {
+    pub fn is_raster(&self) -> bool {
+        matches!(self, Self::Canvas { .. } | Self::Resize { .. })
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -103,6 +126,10 @@ impl ViewTransform {
                 if r > l && b > t {
                     self.compose([1, 0, 0, 1, i64::from(l), i64::from(t)], r - l, b - t);
                 }
+            }
+            EditOperation::Canvas { size, .. } | EditOperation::Resize { size, .. } => {
+                // A raster edit starts a new coordinate space.
+                *self = Self::new(size.0, size.1);
             }
         }
     }

@@ -20,22 +20,29 @@ impl ImageDocument {
         let temp_path = create_temp_sibling(path)?;
         let result = if self.source.is_some()
             && export::is_wic_source(&self.path)
+            && !self.edits.operations.iter().any(EditOperation::is_raster)
             && container != windows::Win32::Graphics::Imaging::GUID_ContainerFormatGif
         {
             self.encode_native_wic(&factory, &temp_path, container, extension, metadata_dirty)
         } else {
-            let materialized;
-            let document = if self.is_preview || !self.edits.operations.is_empty() {
-                materialized = self.render_view(
+            if self.is_preview || !self.edits.operations.is_empty() {
+                self.render_view(
                     DecodeRequest::original(self.frame_index),
                     &|| false,
                     Some(&factory),
-                )?;
-                &materialized
+                )
+                .and_then(|document| {
+                    document.encode_to_path(
+                        &factory,
+                        &temp_path,
+                        container,
+                        extension,
+                        metadata_dirty,
+                    )
+                })
             } else {
-                self
-            };
-            document.encode_to_path(&factory, &temp_path, container, extension, metadata_dirty)
+                self.encode_to_path(&factory, &temp_path, container, extension, metadata_dirty)
+            }
         };
         if let Err(error) = result {
             let _ = fs::remove_file(&temp_path);
@@ -81,7 +88,7 @@ impl ImageDocument {
                 encoded.ok_or_else(|| ImageError("No se pudo crear el codificador.".into()))?;
             encoded.Initialize(options.as_ref())?;
             encoded.SetSize(frame.width, frame.height)?;
-            let (dpi_x, dpi_y) = valid_resolution(self.resolution_dpi);
+            let (dpi_x, dpi_y) = valid_resolution(self.view_resolution());
             encoded.SetResolution(dpi_x, dpi_y)?;
             let mut pixel_format = GUID_WICPixelFormat32bppPBGRA;
             encoded.SetPixelFormat(&mut pixel_format)?;

@@ -393,6 +393,7 @@ fn wic_round_trip_png() {
         source_lease: None,
         source: None,
         edits: EditHistory::default(),
+        raster_cache: None,
     };
     document.save_as(&path).expect("encode PNG with WIC");
     let decoded = ImageDocument::decode(&path).expect("decode PNG with WIC");
