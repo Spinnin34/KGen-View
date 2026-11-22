@@ -177,6 +177,9 @@ pub(super) unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         WM_KEYDOWN => {
+            if wparam.0 as u32 == u32::from(VK_ESCAPE.0) && state.cancel_canvas_pick() {
+                return LRESULT(0);
+            }
             handle_key(state, wparam.0 as u32);
             LRESULT(0)
         }
@@ -205,6 +208,9 @@ pub(super) unsafe extern "system" fn window_proc(
                 return LRESULT(0);
             }
             let point = point_from_lparam(lparam);
+            if state.sample_canvas_color(point) {
+                return LRESULT(0);
+            }
             let layout = state.chrome_layout();
             if state.chrome.menu.press(&layout, point).is_some()
                 || state.chrome.toolbar.press(&layout, point).is_some()
@@ -402,6 +408,10 @@ pub(super) unsafe extern "system" fn window_proc(
             if let Some(result) = state.file_service.take() {
                 state.accept_file_result(result);
             }
+            LRESULT(0)
+        }
+        crate::platform::image_tools::WM_IMAGE_TOOL => {
+            state.image_tool_message(HWND(wparam.0 as *mut c_void), lparam.0);
             LRESULT(0)
         }
         WM_VIEW_DONE => {

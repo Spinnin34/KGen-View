@@ -7,7 +7,7 @@ use windows::Win32::{
     },
 };
 
-pub(super) const CLIENT: (i32, i32) = (414, 357);
+pub(super) const CLIENT: (i32, i32) = (472, 366);
 const CHANNELS: [i32; 4] = [300, 301, 302, 303];
 const LOG_SCALE: i32 = 304;
 const SLIDER: i32 = 305;
@@ -15,11 +15,17 @@ const TBM_GETPOS: u32 = WM_USER;
 const BIN: i32 = 306;
 const COUNTS: i32 = 310;
 const SHARES: i32 = 320;
+const UPDATE: i32 = 330;
+const CURVES: i32 = 331;
+const TOTAL: i32 = 332;
+const MEANS: i32 = 340;
+const MEAN_COLOR: i32 = 350;
 
 pub(super) struct Panel {
     data: Box<Histogram>,
     enabled: [bool; 4],
     logarithmic: bool,
+    curves: bool,
     bin: usize,
 }
 
@@ -29,6 +35,7 @@ impl Panel {
             data,
             enabled: [true; 4],
             logarithmic: false,
+            curves: true,
             bin: 128,
         }
     }
@@ -38,30 +45,44 @@ impl Panel {
             d.text("Rojo", "Red"),
             d.text("Verde", "Green"),
             d.text("Azul", "Blue"),
-            d.text("Luminancia", "Luminance"),
+            d.text("Gris", "Gray"),
         ];
+        d.button(
+            hwnd,
+            UPDATE,
+            d.text("Actualizar", "Refresh"),
+            BS_PUSHBUTTON,
+            [10, 9, 89, 21],
+        );
         for (i, caption) in channels.iter().enumerate() {
             d.checkbox(
                 hwnd,
                 CHANNELS[i],
                 caption,
                 true,
-                [10 + i as i32 * 56, 9, if i == 3 { 98 } else { 56 }, 20],
+                [111 + i as i32 * 57, 9, 57, 20],
             );
         }
+        d.checkbox(
+            hwnd,
+            CURVES,
+            d.text("Curvas", "Curves"),
+            true,
+            [379, 9, 86, 20],
+        );
         d.checkbox(
             hwnd,
             LOG_SCALE,
             d.text("Escala logarítmica", "Log scale"),
             false,
-            [278, 9, 128, 20],
+            [333, 223, 132, 22],
         );
         for (x, label) in [
             (10, "0"),
-            (102, "64"),
-            (195, "128"),
-            (294, "192"),
-            (382, "255"),
+            (116, "64"),
+            (225, "128"),
+            (340, "192"),
+            (440, "255"),
         ] {
             d.label(hwnd, 0, label, [x, 184, 27, 17]);
         }
@@ -77,25 +98,18 @@ impl Panel {
             TRACKBAR_CLASSW,
             "",
             WS_TABSTOP | WINDOW_STYLE(TBS_NOTICKS),
-            [4, 202, 406, 21],
+            [4, 199, 464, 20],
         );
+        if d.dark {
+            paint::install_trackbar(slider);
+        }
         unsafe {
             SendMessageW(slider, TBM_SETRANGEMAX, Some(WPARAM(1)), Some(LPARAM(255)));
         }
         set_slider(slider, self.bin);
-        d.label(hwnd, BIN, "", [10, 231, 103, 18]);
-        d.label(
-            hwnd,
-            0,
-            &format!(
-                "{}  {} / {}",
-                d.text("Píxeles visibles / total", "Visible / total pixels"),
-                count(d, self.data.visible),
-                count(d, self.data.pixels)
-            ),
-            [116, 231, 288, 18],
-        );
-        d.divider(hwnd, 10, 252, 394);
+        d.label(hwnd, BIN, "", [10, 226, 95, 18]);
+        d.label(hwnd, TOTAL, "", [110, 226, 218, 18]);
+        d.divider(hwnd, 10, 248, 452);
         d.label(
             hwnd,
             0,
@@ -110,29 +124,21 @@ impl Panel {
         );
         d.label(hwnd, 0, d.text("Media", "Mean"), [10, 312, 81, 18]);
         for (i, caption) in channels.iter().enumerate() {
-            let x = 93 + i as i32 * 78;
+            let x = 104 + i as i32 * 89;
             d.label(hwnd, 0, caption, [x, 258, 77, 18]);
             d.label(hwnd, COUNTS + i as i32, "", [x, 276, 77, 18]);
             d.label(hwnd, SHARES + i as i32, "", [x, 294, 77, 18]);
-            let mean = if self.data.visible == 0 {
-                "—".into()
-            } else {
-                let sum: u64 = self.data.channels[i]
-                    .iter()
-                    .enumerate()
-                    .map(|(bin, &n)| bin as u64 * n)
-                    .sum();
-                decimal(d, sum as f64 / self.data.visible as f64)
-            };
-            d.label(hwnd, 0, &mean, [x, 312, 77, 18]);
+            d.label(hwnd, MEANS + i as i32, "", [x, 312, 89, 18]);
         }
+        d.label(hwnd, MEAN_COLOR, "", [10, 338, 330, 18]);
         let close = d.button(
             hwnd,
             ACCEPT,
             d.text("Cerrar", "Close"),
             BS_DEFPUSHBUTTON,
-            [318, 330, 86, 22],
+            [376, 336, 86, 22],
         );
+        self.update_means(hwnd, d);
         self.update_stats(hwnd, d);
         close
     }
@@ -141,13 +147,67 @@ impl Panel {
         if id == ACCEPT {
             return true;
         }
+        if id == UPDATE {
+            dialog.notify(hwnd, REFRESH_HISTOGRAM);
+            return false;
+        }
         if let Some(channel) = CHANNELS.iter().position(|&channel| channel == id) {
             self.enabled[channel] = checked(hwnd, id);
         } else if id == LOG_SCALE {
             self.logarithmic = checked(hwnd, id);
+        } else if id == CURVES {
+            self.curves = checked(hwnd, id);
         }
         self.redraw(hwnd, dialog);
         false
+    }
+
+    pub fn replace(&mut self, hwnd: HWND, d: &Dialog, data: Box<Histogram>) {
+        self.data = data;
+        self.update_stats(hwnd, d);
+        self.update_means(hwnd, d);
+        self.redraw(hwnd, d);
+    }
+
+    fn update_means(&self, hwnd: HWND, d: &Dialog) {
+        let mut rgb = [0; 3];
+        for i in 0..4 {
+            let text = if self.data.visible == 0 {
+                "—".into()
+            } else {
+                let sum: u64 = self.data.channels[i]
+                    .iter()
+                    .enumerate()
+                    .map(|(bin, &n)| bin as u64 * n)
+                    .sum();
+                let mean = sum as f64 / self.data.visible as f64;
+                let hex = mean.round() as u8;
+                if let Some(channel) = rgb.get_mut(i) {
+                    *channel = hex;
+                }
+                format!("{}   #{hex:02X}", decimal(d, mean))
+            };
+            set_text(control(hwnd, MEANS + i as i32), &text);
+        }
+        let [r, g, b] = rgb;
+        let color = if self.data.visible == 0 {
+            "—".into()
+        } else {
+            format!("#{r:02X}{g:02X}{b:02X}")
+        };
+        set_text(
+            control(hwnd, MEAN_COLOR),
+            &format!("{}  {color}", d.text("Color medio", "Average color")),
+        );
+        set_text(
+            control(hwnd, TOTAL),
+            &format!(
+                "{}  {} / {}",
+                d.text("Visibles / total", "Visible / total"),
+                count(d, self.data.visible),
+                count(d, self.data.pixels)
+            ),
+        );
     }
 
     pub fn interact(&mut self, hwnd: HWND, d: &Dialog, message: u32, lparam: LPARAM) {
@@ -283,7 +343,20 @@ impl Panel {
                         x: x(bin),
                         y: bottom - (scale(self.data.channels[i][bin]) * ratio).round() as i32,
                     });
-                    line(dc, palette[i], &points);
+                    if self.curves {
+                        line(dc, palette[i], &points);
+                    } else {
+                        let pen = CreatePen(PS_SOLID, 1, COLORREF(palette[i]));
+                        let old = SelectObject(dc, HGDIOBJ(pen.0));
+                        for point in points {
+                            if point.y < bottom {
+                                let _ = MoveToEx(dc, point.x, bottom, None);
+                                let _ = LineTo(dc, point.x, point.y);
+                            }
+                        }
+                        SelectObject(dc, old);
+                        let _ = DeleteObject(HGDIOBJ(pen.0));
+                    }
                 }
             }
             let _ = RestoreDC(dc, clip);
@@ -292,11 +365,11 @@ impl Panel {
 }
 
 fn plot(d: &Dialog) -> RECT {
-    d.rect(10, 38, 394, 127)
+    d.rect(10, 38, 452, 124)
 }
 
 fn grayscale(d: &Dialog) -> RECT {
-    d.rect(10, 172, 394, 9)
+    d.rect(10, 168, 452, 9)
 }
 
 fn draw_grayscale(dc: HDC, rect: RECT) {

@@ -157,6 +157,16 @@ pub fn run() -> Result<(), WinError> {
     }
     let mut message = MSG::default();
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.as_bool() {
+        let tools = unsafe {
+            let state = &*raw_state;
+            [state.histogram_window, state.canvas_window]
+        };
+        if tools
+            .into_iter()
+            .any(|window| crate::platform::image_tools::tool_message(window, &message))
+        {
+            continue;
+        }
         unsafe {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);

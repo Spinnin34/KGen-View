@@ -17,6 +17,7 @@ impl AppState {
         if self.video.as_ref().is_some_and(|view| view.closing) {
             return;
         }
+        self.close_canvas();
         let started = Instant::now();
         self.cancel_wheel_navigation();
         // Keep a completed look-ahead result if its wakeup is still queued

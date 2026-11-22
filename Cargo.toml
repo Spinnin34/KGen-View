@@ -8,6 +8,7 @@ build = "build.rs"
 
 [dependencies]
 gif = "0.14.2"
+image = { version = "0.25.8", default-features = false }
 jxl-oxide = { version = "0.12.6", features = ["moxcms"] }
 png = "0.18.1"
 resvg = "0.45.0"

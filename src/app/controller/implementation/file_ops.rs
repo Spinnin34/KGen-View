@@ -146,7 +146,10 @@ impl AppState {
                 revision,
                 result,
             } => {
-                if self.pending_action.is_none()
+                let target = self.histogram_target.take();
+                if target.is_none_or(|window| {
+                    window == self.histogram_window && unsafe { IsWindow(Some(window)) }.as_bool()
+                }) && self.pending_action.is_none()
                     && self
                         .document
                         .as_ref()
@@ -155,12 +158,17 @@ impl AppState {
                     match result {
                         Ok(histogram) => {
                             self.update_status(None);
-                            crate::platform::image_tools::show_histogram(
-                                self.hwnd,
-                                self.lang(),
-                                self.settings.is_dark(),
-                                histogram,
-                            );
+                            if let Some(window) = target {
+                                crate::platform::image_tools::replace_histogram(window, histogram);
+                            } else {
+                                self.histogram_window =
+                                    crate::platform::image_tools::show_histogram(
+                                        self.hwnd,
+                                        self.lang(),
+                                        self.settings.is_dark(),
+                                        histogram,
+                                    );
+                            }
                         }
                         Err(error) => self.show_error(&error),
                     }
@@ -171,14 +179,24 @@ impl AppState {
                 revision,
                 result,
             } => {
-                if self
-                    .document
-                    .as_ref()
-                    .is_some_and(|doc| doc.id == id && doc.revision == revision)
+                let canvas = std::mem::take(&mut self.canvas_edit_dialog);
+                let notify_canvas = !canvas.0.is_null()
+                    && canvas == self.canvas_window
+                    && unsafe { IsWindow(Some(canvas)) }.as_bool();
+                let mut canvas_size = None;
+                if (canvas.0.is_null() || notify_canvas)
+                    && self
+                        .document
+                        .as_ref()
+                        .is_some_and(|doc| doc.id == id && doc.revision == revision)
                 {
                     match result {
                         Ok(document) => {
                             let (width, height) = document.view_dimensions();
+                            if notify_canvas {
+                                self.canvas_last_revision = Some(document.revision);
+                                canvas_size = Some((width, height));
+                            }
                             self.center = (width as f32 / 2.0, height as f32 / 2.0);
                             self.zoom_mode = ZoomMode::Fit;
                             self.crop_selection = None;
@@ -193,6 +211,9 @@ impl AppState {
                             self.show_error(&error);
                         }
                     }
+                }
+                if notify_canvas {
+                    crate::platform::image_tools::canvas_result(canvas, canvas_size, false);
                 }
             }
             FileResult::Deleted { path, result } => match result {

@@ -76,8 +76,8 @@ use crate::resources::PixelBuffer;
 use gif_source::decode_gif;
 pub use raster_edits::{Histogram, editable_size};
 pub use request::DecodeRequest;
+pub use view::{CanvasPaint, EditOperation, ResampleFilter, ResizeOptions, fitted_size};
 use view::{EditHistory, ViewTransform};
-pub use view::{EditOperation, ResampleFilter, fitted_size};
 use wic_view::prepare_wic_view;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -229,17 +229,21 @@ impl ImageDocument {
         (view.width, view.height)
     }
 
-    fn view_resolution(&self) -> (f64, f64) {
-        let rotations = self
-            .edits
+    pub fn view_resolution(&self) -> (f64, f64) {
+        self.edits
             .operations
             .iter()
-            .filter(|op| matches!(op, EditOperation::RotateLeft | EditOperation::RotateRight));
-        if rotations.count() % 2 == 0 {
-            self.resolution_dpi
-        } else {
-            (self.resolution_dpi.1, self.resolution_dpi.0)
-        }
+            .fold(self.resolution_dpi, |dpi, op| match op {
+                EditOperation::RotateLeft | EditOperation::RotateRight => (dpi.1, dpi.0),
+                EditOperation::Resize {
+                    options:
+                        ResizeOptions {
+                            dpi: Some((x, y)), ..
+                        },
+                    ..
+                } => (f64::from(*x) / 100.0, f64::from(*y) / 100.0),
+                _ => dpi,
+            })
     }
 
     pub fn apply_edit(&mut self, operation: EditOperation) {

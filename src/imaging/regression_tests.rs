@@ -131,7 +131,8 @@ fn canvas_margin_and_crop_survive_preview_history_and_png_export() {
     document.apply_edit(EditOperation::Canvas {
         size: (10, 8),
         offset: (-1, 1),
-        fill: [0; 4],
+        inset: [0; 4],
+        paint: CanvasPaint::solid([0; 4]),
     });
     document.rotate_right();
     let mut view = DecodeRequest::preview((3, 3));
@@ -169,29 +170,71 @@ fn resize_filters_materialize_and_histogram_uses_full_edited_resolution() {
         ResampleFilter::Linear,
         ResampleFilter::Cubic,
         ResampleFilter::Area,
+        ResampleFilter::Lanczos,
+        ResampleFilter::Gaussian,
     ] {
         let mut document = original.clone();
         document.crop(0, 0, 1, 1);
         document.apply_edit(EditOperation::Resize {
             size: (12, 8),
-            filter,
+            options: ResizeOptions {
+                filter,
+                linear_light: false,
+                sharpen: false,
+                dpi: None,
+            },
         });
         document.apply_edit(EditOperation::Canvas {
             size: (14, 10),
             offset: (1, 1),
-            fill: [0; 4],
+            inset: [0; 4],
+            paint: CanvasPaint::solid([0; 4]),
         });
         let preview = document
             .render_view(DecodeRequest::preview((2, 2)), &|| false, None)
             .unwrap();
         assert_eq!(preview.view_dimensions(), (14, 10));
         assert!(preview.current_frame().width < 14);
-        let histogram = preview.histogram(&|| false).unwrap();
+        let histogram = preview.histogram(None, &|| false).unwrap();
         assert_eq!(histogram.pixels, 140);
         assert_eq!(histogram.visible, 96);
         assert!(histogram.channels.iter().all(|channel| channel[0] == 96));
     }
     fs::remove_file(source).unwrap();
+}
+
+#[test]
+fn dpi_only_edit_is_undoable_and_persists_in_export() {
+    let _com = Com::new();
+    let source = path("source-dpi", "png");
+    let output = path("changed-dpi", "png");
+    let mut document = fixture(&source);
+    let old = document.view_resolution();
+    document.apply_edit(EditOperation::Resize {
+        size: document.view_dimensions(),
+        options: ResizeOptions {
+            filter: ResampleFilter::Cubic,
+            linear_light: false,
+            sharpen: false,
+            dpi: Some((30_000, 15_000)),
+        },
+    });
+    assert_eq!(document.view_resolution(), (300.0, 150.0));
+    let histogram = document.histogram(Some((1, 1, 3, 3)), &|| false).unwrap();
+    assert_eq!(histogram.pixels, 4);
+    assert!(document.undo());
+    assert_eq!(document.view_resolution(), old);
+    assert!(document.redo());
+    document.rotate_right();
+    assert_eq!(document.view_resolution(), (150.0, 300.0));
+    document.save_as(&output).unwrap();
+    let reopened =
+        ImageDocument::decode_request(&output, &|| false, None, &DecodeRequest::original(0))
+            .unwrap();
+    let (x, y) = reopened.view_resolution();
+    assert!((x - 150.0).abs() < 0.1 && (y - 300.0).abs() < 0.1);
+    fs::remove_file(source).unwrap();
+    fs::remove_file(output).unwrap();
 }
 
 #[test]

@@ -30,7 +30,10 @@ pub(super) enum FileTask {
         format: ExportFormat,
     },
     Copy(ImageDocument),
-    Histogram(ImageDocument),
+    Histogram {
+        document: ImageDocument,
+        region: Option<(u32, u32, u32, u32)>,
+    },
     EditImage {
         document: ImageDocument,
         operation: EditOperation,
@@ -170,11 +173,11 @@ impl FileService {
                                     .map_err(|e| e.to_string());
                                 FileResult::Copied(result)
                             }
-                            FileTask::Histogram(document) => FileResult::Histogram {
+                            FileTask::Histogram { document, region } => FileResult::Histogram {
                                 id: document.id,
                                 revision: document.revision,
                                 result: document
-                                    .histogram(&|| stopping.load(Ordering::Acquire))
+                                    .histogram(region, &|| stopping.load(Ordering::Acquire))
                                     .map(Box::new)
                                     .map_err(|error| error.to_string()),
                             },

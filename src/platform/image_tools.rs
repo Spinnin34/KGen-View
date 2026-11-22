@@ -22,6 +22,7 @@ use crate::{
 };
 
 mod histogram;
+mod paint;
 mod properties;
 mod size;
 pub use properties::{PropertiesData, PropertiesEdit};
@@ -30,26 +31,29 @@ pub use size::SizeTool;
 const CLASS: PCWSTR = w!("KGenViewImageTools");
 const ACCEPT: i32 = IDOK.0;
 const CANCEL: i32 = IDCANCEL.0;
-const SS_ETCHEDHORZ: WINDOW_STYLE = WINDOW_STYLE(0x10);
 const SS_NOPREFIX: WINDOW_STYLE = WINDOW_STYLE(0x80);
+pub const WM_IMAGE_TOOL: u32 = WM_APP + 32;
+pub const REFRESH_HISTOGRAM: isize = 1;
+pub const APPLY_CANVAS: isize = 2;
+pub const UNDO_CANVAS: isize = 3;
+pub const PICK_CANVAS_COLOR: isize = 4;
+pub const TOOL_CLOSED: isize = 5;
+pub const CANCEL_CANVAS_PICK: isize = 6;
+const WM_CANVAS_PALETTE: u32 = WM_APP + 33;
 
 pub fn show_size(
     owner: HWND,
     language: Language,
     dark: bool,
-    tool: SizeTool,
     dimensions: (u32, u32),
+    dpi: (f64, f64),
 ) -> Option<EditOperation> {
-    let text = match tool {
-        SizeTool::Canvas => Text::CanvasSize,
-        SizeTool::Resize => Text::ResizeImage,
-    };
-    let body = Body::Size(size::Panel::new(tool, dimensions));
+    let body = Body::Resize(size::ResizePanel::new(dimensions, dpi, desktop(owner)));
     match show(
         owner,
         language,
         dark,
-        tr(language, text).trim_end_matches('…'),
+        tr(language, Text::ResizeImage).trim_end_matches('…'),
         body,
     )? {
         DialogResult::Size(edit) => Some(edit),
@@ -57,15 +61,96 @@ pub fn show_size(
     }
 }
 
-pub fn show_histogram(owner: HWND, language: Language, dark: bool, data: Box<Histogram>) {
+pub fn show_histogram(owner: HWND, language: Language, dark: bool, data: Box<Histogram>) -> HWND {
     let body = Body::Histogram(histogram::Panel::new(data));
-    show(
+    show_modeless(
         owner,
         language,
         dark,
         tr(language, Text::Histogram).trim_end_matches('…'),
         body,
-    );
+    )
+}
+
+pub fn show_canvas(owner: HWND, language: Language, dark: bool, dimensions: (u32, u32)) -> HWND {
+    show_modeless(
+        owner,
+        language,
+        dark,
+        tr(language, Text::CanvasSize).trim_end_matches('…'),
+        Body::Canvas(size::CanvasPanel::new(dimensions)),
+    )
+}
+
+pub fn replace_histogram(hwnd: HWND, data: Box<Histogram>) {
+    with_body(hwnd, |dialog, body| {
+        if let Body::Histogram(panel) = body {
+            panel.replace(hwnd, dialog, data);
+        }
+    });
+}
+
+pub fn canvas_operation(hwnd: HWND) -> Option<EditOperation> {
+    with_body(hwnd, |_, body| match body {
+        Body::Canvas(panel) => panel.pending(),
+        _ => None,
+    })
+    .flatten()
+}
+
+pub fn canvas_result(hwnd: HWND, dimensions: Option<(u32, u32)>, undo: bool) {
+    let close = with_body(hwnd, |dialog, body| match body {
+        Body::Canvas(panel) => panel.finish(hwnd, dialog, dimensions, undo),
+        _ => false,
+    });
+    if close == Some(true) {
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
+    }
+}
+
+pub fn canvas_color(hwnd: HWND, color: Option<[u8; 3]>) {
+    with_body(hwnd, |dialog, body| {
+        if let Body::Canvas(panel) = body {
+            panel.picked_color(hwnd, dialog, color);
+        }
+    });
+}
+
+fn with_body<T>(hwnd: HWND, callback: impl FnOnce(&Dialog, &mut Body) -> T) -> Option<T> {
+    if hwnd.0.is_null() {
+        return None;
+    }
+    let pointer = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const Dialog;
+    let dialog = unsafe { pointer.as_ref()? };
+    let mut body = dialog.body.try_borrow_mut().ok()?;
+    Some(callback(dialog, &mut body))
+}
+
+pub fn tool_message(hwnd: HWND, message: &MSG) -> bool {
+    !hwnd.0.is_null()
+        && (hwnd == message.hwnd || unsafe { IsChild(hwnd, message.hwnd) }.as_bool())
+        && unsafe { IsDialogMessageW(hwnd, message) }.as_bool()
+}
+
+fn desktop(owner: HWND) -> (u32, u32) {
+    let monitor = unsafe { MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST) };
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        (
+            (info.rcMonitor.right - info.rcMonitor.left) as u32,
+            (info.rcMonitor.bottom - info.rcMonitor.top) as u32,
+        )
+    } else {
+        (
+            unsafe { GetSystemMetrics(SM_CXSCREEN) } as u32,
+            unsafe { GetSystemMetrics(SM_CYSCREEN) } as u32,
+        )
+    }
 }
 
 pub fn show_properties(
@@ -86,7 +171,8 @@ pub fn show_properties(
 }
 
 enum Body {
-    Size(size::Panel),
+    Canvas(size::CanvasPanel),
+    Resize(size::ResizePanel),
     Histogram(histogram::Panel),
     Properties(Box<properties::Panel>),
 }
@@ -98,6 +184,9 @@ enum DialogResult {
 
 struct Dialog {
     body: RefCell<Body>,
+    sections: RefCell<Vec<paint::Section>>,
+    owner: HWND,
+    modeless: bool,
     language: Language,
     dark: bool,
     dpi: u32,
@@ -123,6 +212,62 @@ fn show(
     title: &str,
     body: Body,
 ) -> Option<DialogResult> {
+    let (hwnd, dialog, focus) = create(owner, language, dark, title, body, false)?;
+    unsafe {
+        let _ = EnableWindow(owner, false);
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = SetFocus(Some(focus));
+    }
+    let mut message = MSG::default();
+    while unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        let received = unsafe { GetMessageW(&mut message, Some(hwnd), 0, 0) };
+        if received.0 <= 0 {
+            if received.0 == 0 {
+                unsafe { PostQuitMessage(message.wParam.0 as i32) };
+            }
+            break;
+        }
+        if !unsafe { IsDialogMessageW(hwnd, &message) }.as_bool() {
+            unsafe {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+    }
+    unsafe {
+        if IsWindow(Some(hwnd)).as_bool() {
+            let _ = DestroyWindow(hwnd);
+        }
+        let _ = EnableWindow(owner, true);
+        let _ = SetForegroundWindow(owner);
+    }
+    match &mut *dialog.body.borrow_mut() {
+        Body::Resize(panel) => panel.result.take().map(DialogResult::Size),
+        Body::Properties(panel) => panel.result.take().map(DialogResult::Properties),
+        _ => None,
+    }
+}
+
+fn show_modeless(owner: HWND, language: Language, dark: bool, title: &str, body: Body) -> HWND {
+    let Some((hwnd, dialog, focus)) = create(owner, language, dark, title, body, true) else {
+        return HWND::default();
+    };
+    let _ = Box::into_raw(dialog);
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = SetFocus(Some(focus));
+    }
+    hwnd
+}
+
+fn create(
+    owner: HWND,
+    language: Language,
+    dark: bool,
+    title: &str,
+    body: Body,
+    modeless: bool,
+) -> Option<(HWND, Box<Dialog>, HWND)> {
     let instance = unsafe { GetModuleHandleW(None).ok()? }.into();
     unsafe {
         RegisterClassExW(&WNDCLASSEXW {
@@ -136,7 +281,8 @@ fn show(
     }
     let window_dpi = unsafe { GetDpiForWindow(owner) }.max(96);
     let (client_w, client_h) = match &body {
-        Body::Size(panel) => panel.client_size(),
+        Body::Canvas(_) => size::CANVAS_CLIENT,
+        Body::Resize(_) => size::RESIZE_CLIENT,
         Body::Histogram(_) => histogram::CLIENT,
         Body::Properties(_) => properties::CLIENT,
     };
@@ -162,6 +308,9 @@ fn show(
     let (background, input) = colors(dark);
     let dialog = Box::new(Dialog {
         body: RefCell::new(body),
+        sections: RefCell::default(),
+        owner,
+        modeless: false,
         language,
         dark,
         dpi,
@@ -212,45 +361,18 @@ fn show(
     let focus = {
         let mut body = dialog.body.borrow_mut();
         match &mut *body {
-            Body::Size(panel) => panel.create(hwnd, &dialog),
+            Body::Canvas(panel) => panel.create(hwnd, &dialog),
+            Body::Resize(panel) => panel.create(hwnd, &dialog),
             Body::Histogram(panel) => panel.create(hwnd, &dialog),
             Body::Properties(panel) => panel.create(hwnd, &dialog),
         }
     };
     unsafe {
         apply_window_theme(hwnd, dark);
-        let _ = EnableWindow(owner, false);
-        let _ = ShowWindow(hwnd, SW_SHOW);
-        let _ = SetFocus(Some(focus));
     }
-    let mut message = MSG::default();
-    while unsafe { IsWindow(Some(hwnd)) }.as_bool() {
-        let received = unsafe { GetMessageW(&mut message, Some(hwnd), 0, 0) };
-        if received.0 <= 0 {
-            if received.0 == 0 {
-                unsafe { PostQuitMessage(message.wParam.0 as i32) };
-            }
-            break;
-        }
-        if !unsafe { IsDialogMessageW(hwnd, &message) }.as_bool() {
-            unsafe {
-                let _ = TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
-        }
-    }
-    unsafe {
-        if IsWindow(Some(hwnd)).as_bool() {
-            let _ = DestroyWindow(hwnd);
-        }
-        let _ = EnableWindow(owner, true);
-        let _ = SetForegroundWindow(owner);
-    }
-    match &mut *dialog.body.borrow_mut() {
-        Body::Size(panel) => panel.result.take().map(DialogResult::Size),
-        Body::Histogram(_) => None,
-        Body::Properties(panel) => panel.result.take().map(DialogResult::Properties),
-    }
+    let mut dialog = dialog;
+    dialog.modeless = modeless;
+    Some((hwnd, dialog, focus))
 }
 
 unsafe extern "system" fn window_proc(
@@ -259,6 +381,12 @@ unsafe extern "system" fn window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if message == WM_CANVAS_PALETTE {
+        if let Some(color) = size::choose_color(hwnd) {
+            canvas_color(hwnd, Some(color));
+        }
+        return LRESULT(0);
+    }
     if message == WM_NCCREATE {
         let create = lparam.0 as *const CREATESTRUCTW;
         unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, (*create).lpCreateParams as isize) };
@@ -275,19 +403,33 @@ unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         DM_GETDEFID => LRESULT(((DC_HASDEFID << 16) | ACCEPT as u32) as isize),
+        WM_NCDESTROY => unsafe {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            if dialog.modeless {
+                let _ = PostMessageW(
+                    Some(dialog.owner),
+                    WM_IMAGE_TOOL,
+                    WPARAM(hwnd.0 as usize),
+                    LPARAM(TOOL_CLOSED),
+                );
+                drop(Box::from_raw(pointer.cast_mut()));
+            }
+            DefWindowProcW(hwnd, message, wparam, lparam)
+        },
         WM_COMMAND => {
-            if let Ok(mut body) = dialog.body.try_borrow_mut() {
+            let close = dialog.body.try_borrow_mut().is_ok_and(|mut body| {
                 let id = (wparam.0 & 0xffff) as i32;
                 let notification = (wparam.0 >> 16) as u32;
-                let close = match &mut *body {
-                    Body::Size(panel) => panel.command(hwnd, dialog, id, notification),
+                match &mut *body {
+                    Body::Canvas(panel) => panel.command(hwnd, dialog, id, notification),
+                    Body::Resize(panel) => panel.command(hwnd, dialog, id, notification),
                     Body::Histogram(panel) => panel.command(hwnd, dialog, id),
                     Body::Properties(panel) => panel.command(hwnd, id),
-                };
-                if close {
-                    unsafe {
-                        let _ = DestroyWindow(hwnd);
-                    }
+                }
+            });
+            if close {
+                unsafe {
+                    let _ = DestroyWindow(hwnd);
                 }
             }
             LRESULT(0)
@@ -303,21 +445,23 @@ unsafe extern "system" fn window_proc(
         WM_PAINT => {
             let mut paint = PAINTSTRUCT::default();
             let dc = unsafe { BeginPaint(hwnd, &mut paint) };
-            if let Ok(body) = dialog.body.try_borrow()
-                && let Body::Histogram(panel) = &*body
-            {
-                panel.paint(dc, dialog);
-            }
+            paint_dialog(hwnd, dc, dialog);
             unsafe {
                 let _ = EndPaint(hwnd, &paint);
             }
+            LRESULT(0)
+        }
+        WM_PRINTCLIENT => {
+            paint_dialog(hwnd, HDC(wparam.0 as *mut c_void), dialog);
             LRESULT(0)
         }
         WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX | WM_CTLCOLORBTN => {
             let dc = HDC(wparam.0 as *mut c_void);
             let child = HWND(lparam.0 as *mut c_void);
             let (background, input) = colors(dialog.dark);
-            let is_input = matches!(message, WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX);
+            let read_only = message == WM_CTLCOLORSTATIC
+                && unsafe { GetWindowLongPtrW(child, GWL_STYLE) } as i32 & ES_READONLY != 0;
+            let is_input = matches!(message, WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX) || read_only;
             let disabled = !unsafe { IsWindowEnabled(child).as_bool() };
             unsafe {
                 SetTextColor(
@@ -330,6 +474,7 @@ unsafe extern "system" fn window_proc(
                     }),
                 );
                 SetBkColor(dc, if is_input { input } else { background });
+                SetBkMode(dc, OPAQUE);
             }
             LRESULT(if is_input {
                 dialog.input.0
@@ -337,15 +482,37 @@ unsafe extern "system" fn window_proc(
                 dialog.background.0
             } as isize)
         }
-        WM_ERASEBKGND => {
-            let mut rect = RECT::default();
-            unsafe {
-                let _ = GetClientRect(hwnd, &mut rect);
-                FillRect(HDC(wparam.0 as *mut c_void), &rect, dialog.background);
+        WM_MEASUREITEM if dialog.dark => {
+            let item = unsafe {
+                (lparam.0 as *mut windows::Win32::UI::Controls::MEASUREITEMSTRUCT).as_mut()
+            };
+            if let Some(item) = item {
+                item.itemHeight = dialog.px(18).max(1) as u32;
             }
             LRESULT(1)
         }
+        WM_DRAWITEM if dialog.dark => {
+            let item = unsafe {
+                (lparam.0 as *const windows::Win32::UI::Controls::DRAWITEMSTRUCT).as_ref()
+            };
+            LRESULT(isize::from(item.is_some_and(paint::combo_item)))
+        }
+        WM_ERASEBKGND => LRESULT(1),
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+    }
+}
+
+fn paint_dialog(hwnd: HWND, dc: HDC, dialog: &Dialog) {
+    let mut rect = RECT::default();
+    unsafe {
+        let _ = GetClientRect(hwnd, &mut rect);
+        FillRect(dc, &rect, dialog.background);
+    }
+    paint::sections(dc, dialog);
+    if let Ok(body) = dialog.body.try_borrow()
+        && let Body::Histogram(panel) = &*body
+    {
+        panel.paint(dc, dialog);
     }
 }
 
@@ -423,12 +590,12 @@ impl Dialog {
                     Some(WPARAM(self.font.0 as usize)),
                     Some(LPARAM(1)),
                 );
-                let theme = if self.dark {
-                    w!("DarkMode_Explorer")
-                } else {
-                    w!("Explorer")
-                };
-                let _ = SetWindowTheme(handle, theme, None);
+                let theme = if self.dark { w!("") } else { w!("Explorer") };
+                let _ = SetWindowTheme(
+                    handle,
+                    theme,
+                    if self.dark { w!("") } else { PCWSTR::null() },
+                );
             }
         }
         handle
@@ -438,19 +605,18 @@ impl Dialog {
         self.control(owner, id, w!("STATIC"), title, SS_NOPREFIX, bounds)
     }
 
-    fn group(&self, owner: HWND, title: &str, bounds: [i32; 4]) {
-        self.control(
-            owner,
-            0,
-            w!("BUTTON"),
-            title,
-            WINDOW_STYLE(BS_GROUPBOX as u32) | WS_CLIPSIBLINGS,
-            bounds,
-        );
+    fn group(&self, _owner: HWND, title: &str, [x, y, w, h]: [i32; 4]) {
+        self.sections.borrow_mut().push(paint::Section {
+            rect: self.rect(x, y, w, h),
+            title: title.encode_utf16().collect(),
+        });
     }
 
-    fn divider(&self, owner: HWND, x: i32, y: i32, width: i32) {
-        self.control(owner, 0, w!("STATIC"), "", SS_ETCHEDHORZ, [x, y, width, 2]);
+    fn divider(&self, _owner: HWND, x: i32, y: i32, width: i32) {
+        self.sections.borrow_mut().push(paint::Section {
+            rect: self.rect(x, y, width, 1),
+            title: Vec::new(),
+        });
     }
 
     fn input(&self, owner: HWND, id: i32, value: &str, bounds: [i32; 4]) -> HWND {
@@ -474,38 +640,41 @@ impl Dialog {
         selected: usize,
         bounds: [i32; 4],
     ) -> HWND {
+        let mut style = WINDOW_STYLE(CBS_DROPDOWNLIST as u32);
+        if self.dark {
+            style |= WINDOW_STYLE((CBS_OWNERDRAWFIXED | CBS_HASSTRINGS) as u32);
+        }
         let handle = self.control(
             owner,
             id,
             w!("COMBOBOX"),
             "",
-            WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+            WS_TABSTOP | WS_VSCROLL | style,
             bounds,
         );
         for item in items {
-            let item = wide(item);
-            unsafe {
-                SendMessageW(
-                    handle,
-                    CB_ADDSTRING,
-                    None,
-                    Some(LPARAM(item.as_ptr() as isize)),
-                );
-            }
+            add_combo_item(handle, item);
         }
         send(handle, CB_SETCURSEL, selected);
+        if self.dark {
+            paint::install_combo(handle);
+        }
         handle
     }
 
     fn button(&self, owner: HWND, id: i32, title: &str, style: i32, bounds: [i32; 4]) -> HWND {
-        self.control(
+        let handle = self.control(
             owner,
             id,
             w!("BUTTON"),
             title,
             WS_TABSTOP | WINDOW_STYLE(style as u32),
             bounds,
-        )
+        );
+        if self.dark {
+            paint::install_button(handle, self.dpi);
+        }
+        handle
     }
 
     fn checkbox(&self, owner: HWND, id: i32, title: &str, checked: bool, bounds: [i32; 4]) -> HWND {
@@ -522,7 +691,22 @@ impl Dialog {
         style: WINDOW_STYLE,
         bounds: [i32; 4],
     ) -> HWND {
-        self.control(owner, id, w!("BUTTON"), title, style, bounds)
+        let handle = self.control(owner, id, w!("BUTTON"), title, style, bounds);
+        if self.dark {
+            paint::install_button(handle, self.dpi);
+        }
+        handle
+    }
+
+    fn notify(&self, hwnd: HWND, message: isize) {
+        unsafe {
+            let _ = PostMessageW(
+                Some(self.owner),
+                WM_IMAGE_TOOL,
+                WPARAM(hwnd.0 as usize),
+                LPARAM(message),
+            );
+        }
     }
 }
 
@@ -539,6 +723,26 @@ fn send(hwnd: HWND, message: u32, value: usize) -> isize {
 
 fn selected(hwnd: HWND, id: i32) -> usize {
     send(control(hwnd, id), CB_GETCURSEL, 0).max(0) as usize
+}
+
+fn add_combo_item(hwnd: HWND, item: &str) {
+    let item = wide(item);
+    unsafe {
+        SendMessageW(
+            hwnd,
+            CB_ADDSTRING,
+            None,
+            Some(LPARAM(item.as_ptr() as isize)),
+        );
+    }
+}
+
+fn enable(hwnd: HWND, id: i32, enabled: bool) {
+    let child = control(hwnd, id);
+    unsafe {
+        let _ = EnableWindow(child, enabled);
+        let _ = InvalidateRect(Some(child), None, true);
+    }
 }
 
 fn checked(hwnd: HWND, id: i32) -> bool {
@@ -577,5 +781,71 @@ mod tests {
         assert!(pixels(properties::CLIENT.0) + frame.0 <= screen.right - screen.left);
         assert!(pixels(properties::CLIENT.1) + frame.1 <= screen.bottom - screen.top);
         assert_eq!(fit_layout_dpi(96, properties::CLIENT, frame, screen), 96);
+    }
+
+    #[test]
+    fn dark_canvas_prints_sections_and_buttons_without_light_backdrops() {
+        unsafe {
+            let owner = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                w!("STATIC"),
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                640,
+                480,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let (hwnd, dialog, _) = create(
+                owner,
+                Language::Spanish,
+                true,
+                "Lienzo",
+                Body::Canvas(size::CanvasPanel::new((736, 981))),
+                false,
+            )
+            .unwrap();
+            let dc = CreateCompatibleDC(None);
+            let mut client = RECT::default();
+            GetClientRect(hwnd, &mut client).unwrap();
+            let info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: client.right,
+                    biHeight: -client.bottom,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut pixels = std::ptr::null_mut();
+            let bitmap =
+                CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut pixels, None, 0).unwrap();
+            let old = SelectObject(dc, HGDIOBJ(bitmap.0));
+            SendMessageW(hwnd, WM_PRINTCLIENT, Some(WPARAM(dc.0 as usize)), None);
+            let interior = GetPixel(dc, dialog.px(17), dialog.px(47));
+            let outline = GetPixel(dc, dialog.px(8), dialog.px(47));
+            SendMessageW(
+                control(hwnd, CANCEL),
+                WM_PRINTCLIENT,
+                Some(WPARAM(dc.0 as usize)),
+                None,
+            );
+            let button = GetPixel(dc, dialog.px(7), dialog.px(4));
+            SelectObject(dc, old);
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
+            let _ = DeleteDC(dc);
+            DestroyWindow(hwnd).unwrap();
+            DestroyWindow(owner).unwrap();
+            assert_eq!(interior, COLORREF(0x00202020));
+            assert_eq!(outline, COLORREF(0x00555555));
+            assert_eq!(button, COLORREF(0x00343434));
+        }
     }
 }

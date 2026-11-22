@@ -3,14 +3,22 @@ use crate::platform::image_tools::{self, SizeTool};
 
 impl AppState {
     pub(super) fn open_histogram(&mut self) {
+        if !self.histogram_window.0.is_null() {
+            unsafe {
+                let _ = SetForegroundWindow(self.histogram_window);
+            }
+        }
         if self.file_busy || self.load_started.is_some() {
             return;
         }
         if let Some(document) = &self.document {
-            self.file_busy = self
-                .file_service
-                .submit(FileTask::Histogram(document.export_snapshot()));
+            self.file_busy = self.file_service.submit(FileTask::Histogram {
+                document: document.export_snapshot(),
+                region: self.crop_selection,
+            });
             if self.file_busy {
+                self.histogram_target =
+                    (!self.histogram_window.0.is_null()).then_some(self.histogram_window);
                 self.update_status(Some(if self.lang() == Language::Spanish {
                     "Calculando histograma…"
                 } else {
@@ -27,26 +35,228 @@ impl AppState {
         let Some(document) = self.document.as_ref().map(ImageDocument::export_snapshot) else {
             return;
         };
-        let operation = image_tools::show_size(
-            self.hwnd,
-            self.lang(),
-            self.settings.is_dark(),
-            tool,
-            document.view_dimensions(),
-        );
-        if let Some(operation) = operation {
-            self.file_busy = self.file_service.submit(FileTask::EditImage {
-                document,
-                operation,
-            });
-            if self.file_busy {
-                self.update_status(Some(if self.lang() == Language::Spanish {
-                    "Aplicando cambios a la imagen…"
-                } else {
-                    "Applying image changes…"
-                }));
+        match tool {
+            SizeTool::Canvas => {
+                if self.canvas_document == Some(document.id)
+                    && unsafe { IsWindow(Some(self.canvas_window)) }.as_bool()
+                {
+                    if !self.cancel_canvas_pick() {
+                        unsafe {
+                            let _ = SetForegroundWindow(self.canvas_window);
+                        }
+                    }
+                    return;
+                }
+                self.close_canvas();
+                self.canvas_window = image_tools::show_canvas(
+                    self.hwnd,
+                    self.lang(),
+                    self.settings.is_dark(),
+                    document.view_dimensions(),
+                );
+                self.canvas_document = Some(document.id);
+            }
+            SizeTool::Resize => {
+                self.close_canvas();
+                if let Some(operation) = image_tools::show_size(
+                    self.hwnd,
+                    self.lang(),
+                    self.settings.is_dark(),
+                    document.view_dimensions(),
+                    document.view_resolution(),
+                ) {
+                    self.submit_image_edit(document, operation);
+                }
             }
         }
+    }
+
+    fn submit_image_edit(
+        &mut self,
+        document: ImageDocument,
+        operation: crate::imaging::EditOperation,
+    ) -> bool {
+        self.file_busy = self.file_service.submit(FileTask::EditImage {
+            document,
+            operation,
+        });
+        if self.file_busy {
+            self.update_status(Some(if self.lang() == Language::Spanish {
+                "Aplicando cambios a la imagen…"
+            } else {
+                "Applying image changes…"
+            }));
+        }
+        self.file_busy
+    }
+
+    pub(super) fn image_tool_message(&mut self, window: HWND, action: isize) {
+        if window == self.histogram_window {
+            if action == image_tools::TOOL_CLOSED {
+                self.histogram_window = HWND::default();
+            } else if action == image_tools::REFRESH_HISTOGRAM {
+                self.open_histogram();
+            }
+            return;
+        }
+        if window != self.canvas_window || window.0.is_null() {
+            return;
+        }
+        if action == image_tools::TOOL_CLOSED {
+            self.canvas_window = HWND::default();
+            self.canvas_picking = false;
+            self.canvas_document = None;
+            self.canvas_last_revision = None;
+            self.update_status(None);
+            return;
+        }
+        if action == image_tools::CANCEL_CANVAS_PICK {
+            self.cancel_canvas_pick();
+            return;
+        }
+        if self.file_busy
+            || self.load_started.is_some()
+            || self
+                .document
+                .as_ref()
+                .is_none_or(|doc| self.canvas_document != Some(doc.id))
+        {
+            if action == image_tools::PICK_CANVAS_COLOR {
+                image_tools::canvas_color(window, None);
+            } else {
+                image_tools::canvas_result(window, None, false);
+            }
+            return;
+        }
+        match action {
+            image_tools::PICK_CANVAS_COLOR => {
+                self.canvas_picking = true;
+                self.update_status(Some(if self.lang() == Language::Spanish {
+                    "Haz clic en la imagen para tomar su color. Esc cancela."
+                } else {
+                    "Click the image to sample its color. Press Esc to cancel."
+                }));
+                unsafe {
+                    let _ = ShowWindow(window, windows::Win32::UI::WindowsAndMessaging::SW_HIDE);
+                    let _ = SetForegroundWindow(self.hwnd);
+                }
+            }
+            image_tools::APPLY_CANVAS => {
+                if let Some(operation) = image_tools::canvas_operation(window)
+                    && let Some(document) =
+                        self.document.as_ref().map(ImageDocument::export_snapshot)
+                    && self.submit_image_edit(document, operation)
+                {
+                    self.canvas_edit_dialog = window;
+                } else {
+                    image_tools::canvas_result(window, None, false);
+                }
+            }
+            image_tools::UNDO_CANVAS => {
+                let document = self.document.as_mut().expect("canvas document");
+                let size =
+                    if self.canvas_last_revision == Some(document.revision) && document.undo() {
+                        self.canvas_last_revision = Some(document.revision);
+                        Some(document.view_dimensions())
+                    } else {
+                        None
+                    };
+                if let Some(size) = size {
+                    self.refresh_edit_view(size);
+                }
+                image_tools::canvas_result(window, size, true);
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn close_canvas(&mut self) {
+        let canvas = std::mem::take(&mut self.canvas_window);
+        self.canvas_document = None;
+        self.canvas_last_revision = None;
+        self.canvas_picking = false;
+        if !canvas.0.is_null() {
+            unsafe {
+                let _ = DestroyWindow(canvas);
+            }
+        }
+    }
+
+    pub(super) fn cancel_canvas_pick(&mut self) -> bool {
+        if !std::mem::take(&mut self.canvas_picking) {
+            return false;
+        }
+        image_tools::canvas_color(self.canvas_window, None);
+        self.present_canvas_after_sampling();
+        self.update_status(None);
+        true
+    }
+
+    pub(super) fn sample_canvas_color(&mut self, point: POINT) -> bool {
+        if !self.canvas_picking {
+            return false;
+        }
+        let area = self.image_area();
+        if point.x < area.left
+            || point.x >= area.right
+            || point.y < area.top
+            || point.y >= area.bottom
+        {
+            return false;
+        }
+        let Some(destination) = self.calculate_view() else {
+            return false;
+        };
+        let Some(document) = &self.document else {
+            return false;
+        };
+        let x = (point.x as f32 - destination.left) / self.zoom;
+        let y = (point.y as f32 - destination.top) / self.zoom;
+        let (l, t, r, b) = document.rendered_region;
+        let frame = document.current_frame();
+        if !(l as f32..r as f32).contains(&x) || !(t as f32..b as f32).contains(&y) {
+            return false;
+        }
+        let sx =
+            (((x - l as f32) * frame.width as f32 / (r - l) as f32) as u32).min(frame.width - 1);
+        let sy =
+            (((y - t as f32) * frame.height as f32 / (b - t) as f32) as u32).min(frame.height - 1);
+        let start = (sy as usize * frame.width as usize + sx as usize) * 4;
+        let [blue, green, red, alpha]: [u8; 4] = frame.pixels[start..start + 4].try_into().unwrap();
+        let unpremultiply = |channel| {
+            ((u16::from(channel) * 255 + u16::from(alpha) / 2) / u16::from(alpha).max(1)).min(255)
+                as u8
+        };
+        self.canvas_picking = false;
+        image_tools::canvas_color(
+            self.canvas_window,
+            Some([
+                unpremultiply(red),
+                unpremultiply(green),
+                unpremultiply(blue),
+            ]),
+        );
+        self.present_canvas_after_sampling();
+        self.update_status(None);
+        true
+    }
+
+    fn present_canvas_after_sampling(&self) {
+        unsafe {
+            let _ = ShowWindow(
+                self.canvas_window,
+                windows::Win32::UI::WindowsAndMessaging::SW_SHOW,
+            );
+            let _ = SetForegroundWindow(self.canvas_window);
+        }
+    }
+
+    fn refresh_edit_view(&mut self, (width, height): (u32, u32)) {
+        self.crop_selection = None;
+        self.center = (width as f32 / 2.0, height as f32 / 2.0);
+        self.zoom_mode = ZoomMode::Fit;
+        self.request_view();
+        self.update_status(None);
     }
 
     pub(super) fn edit<F: FnOnce(&mut ImageDocument)>(&mut self, operation: F) {
@@ -54,13 +264,13 @@ impl AppState {
             return;
         }
         if let Some(document) = &mut self.document {
+            let revision = document.revision;
             operation(document);
-            self.crop_selection = None;
-            let (width, height) = document.view_dimensions();
-            self.center = (width as f32 / 2.0, height as f32 / 2.0);
-            self.zoom_mode = ZoomMode::Fit;
-            self.request_view();
-            self.update_status(None);
+            let size = document.view_dimensions();
+            if document.revision != revision {
+                self.close_canvas();
+            }
+            self.refresh_edit_view(size);
         }
     }
 

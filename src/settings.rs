@@ -275,7 +275,7 @@ fn write_dword(name: &str, value: u32) {
     }
 }
 
-fn read_string(name: &str) -> Option<String> {
+pub(crate) fn read_string(name: &str) -> Option<String> {
     let key = wide(KEY);
     let name = wide(name);
     let mut size = 0u32;
@@ -315,7 +315,7 @@ fn read_string(name: &str) -> Option<String> {
     Some(String::from_utf16_lossy(&buffer[..end]))
 }
 
-fn write_string(name: &str, value: &str) {
+pub(crate) fn write_string(name: &str, value: &str) {
     let key = wide(KEY);
     let name = wide(name);
     let value = wide(value);

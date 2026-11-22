@@ -269,7 +269,7 @@ impl AppState {
             .map(|(index, count)| format!("{index} / {count}"))
             .unwrap_or_else(|| "—".into());
         let ratio = width as f64 / height.max(1) as f64;
-        let (dpi_x, dpi_y) = doc.resolution_dpi;
+        let (dpi_x, dpi_y) = doc.view_resolution();
         let dpi_x = if dpi_x.is_finite() && dpi_x > 0.0 {
             dpi_x
         } else {

@@ -5,6 +5,33 @@ pub enum ResampleFilter {
     Linear,
     Cubic,
     Area,
+    Lanczos,
+    Gaussian,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CanvasPaint {
+    pub color: [u8; 4],
+    pub blur: Option<(u8, bool)>,
+    pub gamma: u16,
+}
+
+impl CanvasPaint {
+    pub const fn solid(color: [u8; 4]) -> Self {
+        Self {
+            color,
+            blur: None,
+            gamma: 100,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResizeOptions {
+    pub filter: ResampleFilter,
+    pub linear_light: bool,
+    pub sharpen: bool,
+    pub dpi: Option<(u32, u32)>, // Hundredths of a dot per inch.
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,11 +44,12 @@ pub enum EditOperation {
     Canvas {
         size: (u32, u32),
         offset: (i32, i32),
-        fill: [u8; 4], // Premultiplied BGRA.
+        inset: [u32; 4], // Left, top, right and bottom excluded from the source.
+        paint: CanvasPaint,
     },
     Resize {
         size: (u32, u32),
-        filter: ResampleFilter,
+        options: ResizeOptions,
     },
 }
 
