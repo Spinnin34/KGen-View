@@ -233,8 +233,8 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "convert_image",
-            "Export the current image to a new file in a Windows-supported format. The output path must not already exist; the original image remains open and unchanged.",
-            json!({"type":"object","properties":{"output_path":{"type":"string","description":"Absolute new file path. Its extension must match format, or may be omitted."},"format":{"type":"string","description":"Available format name or extension, such as PNG, JPEG, or TIFF."}},"required":["output_path","format"],"additionalProperties":false}),
+            "Export the current image to a new file using an available Windows Imaging Component encoder or a built-in KGen codec. The output path must not already exist; the original image remains open and unchanged.",
+            json!({"type":"object","properties":{"output_path":{"type":"string","description":"Absolute new file path. Its extension must match format, or may be omitted."},"format":{"type":"string","description":"Available format name or extension, such as PNG, JPEG, TIFF, TGA, QOI, PNM, HDR, or OpenEXR."}},"required":["output_path","format"],"additionalProperties":false}),
         ),
     ];
     for (name, description) in [

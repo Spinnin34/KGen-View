@@ -4,7 +4,7 @@ impl ImageDocument {
     pub(super) fn write_container(
         &self,
         path: &Path,
-        container: windows::core::GUID,
+        backend: ExportBackend,
         extension: &str,
         metadata_dirty: bool,
     ) -> ImageResult<()> {
@@ -16,34 +16,61 @@ impl ImageDocument {
         if let Some(source) = &self.source {
             source.verify()?;
         }
-        let factory = Self::create_wic_factory()?;
+        let factory = match backend {
+            ExportBackend::Wic(_) => Some(Self::create_wic_factory()?),
+            ExportBackend::Builtin(_) => Self::create_wic_factory().ok(),
+        };
         let temp_path = create_temp_sibling(path)?;
-        let result = if self.source.is_some()
-            && export::is_wic_source(&self.path)
-            && !self.edits.operations.iter().any(EditOperation::is_raster)
-            && container != windows::Win32::Graphics::Imaging::GUID_ContainerFormatGif
-        {
-            self.encode_native_wic(&factory, &temp_path, container, extension, metadata_dirty)
-        } else {
-            if self.is_preview || !self.edits.operations.is_empty() {
-                self.render_view(
-                    DecodeRequest::original(self.frame_index),
-                    &|| false,
-                    Some(&factory),
-                )
-                .and_then(|document| {
-                    document.encode_to_path(
-                        &factory,
+        let result = (|| -> ImageResult<()> {
+            match backend {
+                ExportBackend::Builtin(format) => {
+                    let rendered = if self.is_preview || !self.edits.operations.is_empty() {
+                        self.render_view(
+                            DecodeRequest::original(self.frame_index),
+                            &|| false,
+                            factory.as_ref(),
+                        )?
+                    } else {
+                        self.clone()
+                    };
+                    super::builtin_codec::write(&rendered, &temp_path, format, extension)
+                }
+                ExportBackend::Wic(container)
+                    if self.source.is_some()
+                        && export::is_wic_source(&self.path)
+                        && !self.edits.operations.iter().any(EditOperation::is_raster)
+                        && container
+                            != windows::Win32::Graphics::Imaging::GUID_ContainerFormatGif =>
+                {
+                    self.encode_native_wic(
+                        factory.as_ref().expect("WIC backend has a factory"),
                         &temp_path,
                         container,
                         extension,
                         metadata_dirty,
                     )
-                })
-            } else {
-                self.encode_to_path(&factory, &temp_path, container, extension, metadata_dirty)
+                }
+                ExportBackend::Wic(container) => {
+                    let factory = factory.as_ref().expect("WIC backend has a factory");
+                    let document = if self.is_preview || !self.edits.operations.is_empty() {
+                        self.render_view(
+                            DecodeRequest::original(self.frame_index),
+                            &|| false,
+                            Some(factory),
+                        )?
+                    } else {
+                        self.clone()
+                    };
+                    document.encode_to_path(
+                        factory,
+                        &temp_path,
+                        container,
+                        extension,
+                        metadata_dirty,
+                    )
+                }
             }
-        };
+        })();
         if let Err(error) = result {
             let _ = fs::remove_file(&temp_path);
             return Err(error);
@@ -150,7 +177,7 @@ impl ImageDocument {
         Ok(())
     }
 
-    fn encode_gif_to_path(&self, path: &Path) -> ImageResult<()> {
+    pub(super) fn encode_gif_to_path(&self, path: &Path) -> ImageResult<()> {
         let frame = self.current_frame();
         let width = u16::try_from(frame.width)
             .map_err(|_| ImageError("El ancho supera el límite del formato GIF.".into()))?;

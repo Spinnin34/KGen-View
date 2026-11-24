@@ -49,6 +49,7 @@ pub(crate) fn prefetch_source_supported(path: &Path, size: u64) -> bool {
         && (extension != "jxl" || size <= MAX_JXL_PREFETCH_FILE_BYTES)
         && (extension != "svg" || size <= MAX_PREFETCH_SVG_BYTES)
 }
+mod builtin_codec;
 mod decoding;
 mod encoding;
 mod jxl;
@@ -147,9 +148,15 @@ impl From<std::io::Error> for ImageError {
 
 pub type ImageResult<T> = Result<T, ImageError>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportBackend {
+    Wic(windows::core::GUID),
+    Builtin(image::ImageFormat),
+}
+
 #[derive(Clone, Debug)]
 pub struct ExportFormat {
-    pub container: windows::core::GUID,
+    pub backend: ExportBackend,
     pub name: String,
     pub extensions: Vec<String>,
 }
@@ -323,20 +330,34 @@ impl ImageDocument {
             .and_then(|value| value.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        let container = match extension.as_str() {
-            "jpg" | "jpeg" | "jpe" => GUID_ContainerFormatJpeg,
-            "png" => windows::Win32::Graphics::Imaging::GUID_ContainerFormatPng,
-            "bmp" | "dib" => windows::Win32::Graphics::Imaging::GUID_ContainerFormatBmp,
-            "tif" | "tiff" => windows::Win32::Graphics::Imaging::GUID_ContainerFormatTiff,
-            "gif" => windows::Win32::Graphics::Imaging::GUID_ContainerFormatGif,
-            "wdp" | "jxr" | "hdp" => windows::Win32::Graphics::Imaging::GUID_ContainerFormatWmp,
+        let backend = match extension.as_str() {
+            "jpg" | "jpeg" | "jpe" => ExportBackend::Wic(GUID_ContainerFormatJpeg),
+            "png" => ExportBackend::Wic(windows::Win32::Graphics::Imaging::GUID_ContainerFormatPng),
+            "bmp" | "dib" => {
+                ExportBackend::Wic(windows::Win32::Graphics::Imaging::GUID_ContainerFormatBmp)
+            }
+            "tif" | "tiff" => {
+                ExportBackend::Wic(windows::Win32::Graphics::Imaging::GUID_ContainerFormatTiff)
+            }
+            "gif" => ExportBackend::Wic(windows::Win32::Graphics::Imaging::GUID_ContainerFormatGif),
+            "wdp" | "jxr" | "hdp" => {
+                ExportBackend::Wic(windows::Win32::Graphics::Imaging::GUID_ContainerFormatWmp)
+            }
+            "tga" => ExportBackend::Builtin(image::ImageFormat::Tga),
+            "exr" => ExportBackend::Builtin(image::ImageFormat::OpenExr),
+            "hdr" => ExportBackend::Builtin(image::ImageFormat::Hdr),
+            "qoi" => ExportBackend::Builtin(image::ImageFormat::Qoi),
+            "ff" => ExportBackend::Builtin(image::ImageFormat::Farbfeld),
+            "pbm" | "pam" | "ppm" | "pgm" | "pnm" => {
+                ExportBackend::Builtin(image::ImageFormat::Pnm)
+            }
             _ => {
                 return Err(ImageError(
                     "Windows no tiene un codificador disponible para el formato elegido.".into(),
                 ));
             }
         };
-        self.save_as_container(path, container, &extension)
+        self.save_as_backend(path, backend, &extension)
     }
 
     pub fn save_as_format(&mut self, path: &Path, format: &ExportFormat) -> ImageResult<()> {
@@ -345,16 +366,16 @@ impl ImageDocument {
             .and_then(|value| value.to_str())
             .unwrap_or(format.extension())
             .to_ascii_lowercase();
-        self.save_as_container(path, format.container, &extension)
+        self.save_as_backend(path, format.backend, &extension)
     }
 
-    fn save_as_container(
+    fn save_as_backend(
         &mut self,
         path: &Path,
-        container: windows::core::GUID,
+        backend: ExportBackend,
         extension: &str,
     ) -> ImageResult<()> {
-        self.write_container(path, container, extension, self.metadata_dirty)?;
+        self.write_container(path, backend, extension, self.metadata_dirty)?;
         self.path = path.to_path_buf();
         self.original_size = self.view_dimensions();
         self.source_frame_count = 1;
@@ -381,7 +402,7 @@ impl ImageDocument {
             .and_then(|value| value.to_str())
             .unwrap_or(format.extension())
             .to_ascii_lowercase();
-        self.write_container(path, format.container, &extension, false)
+        self.write_container(path, format.backend, &extension, false)
     }
 
     pub fn relocate_source(&mut self, path: PathBuf) {

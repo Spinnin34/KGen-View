@@ -22,7 +22,12 @@ impl AppState {
         } else {
             ("Images, videos and ZIP", "Videos", "All files")
         };
-        let images = "*.bmp;*.dib;*.jpg;*.jpeg;*.jpe;*.png;*.gif;*.tif;*.tiff;*.ico;*.webp;*.heic;*.heif;*.jxl;*.jxr;*.wdp;*.hdp;*.dds;*.svg;*.zip;*.cbz";
+        let images = crate::formats::IMAGE_EXTENSIONS
+            .iter()
+            .chain(crate::formats::ARCHIVE_EXTENSIONS)
+            .map(|extension| format!("*.{extension}"))
+            .collect::<Vec<_>>()
+            .join(";");
         let videos = crate::catalog::VIDEO_EXTENSIONS
             .iter()
             .map(|extension| format!("*.{extension}"))

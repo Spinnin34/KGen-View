@@ -1,5 +1,28 @@
 use super::*;
 
+fn builtin_export_formats(mut formats: Vec<ExportFormat>) -> Vec<ExportFormat> {
+    for codec in builtin_codec::export_formats() {
+        let extensions: Vec<String> = codec
+            .extensions_str()
+            .iter()
+            .filter(|extension| {
+                !formats
+                    .iter()
+                    .any(|format| format.accepts_extension(extension))
+            })
+            .map(|extension| (*extension).to_owned())
+            .collect();
+        if !extensions.is_empty() {
+            formats.push(ExportFormat {
+                backend: ExportBackend::Builtin(codec),
+                name: builtin_codec::display_name(codec).into(),
+                extensions,
+            });
+        }
+    }
+    formats
+}
+
 impl ImageDocument {
     pub fn create_wic_factory() -> ImageResult<IWICImagingFactory> {
         unsafe {
@@ -13,10 +36,17 @@ impl ImageDocument {
     }
 
     pub fn available_export_formats() -> ImageResult<Vec<ExportFormat>> {
-        let factory: IWICImagingFactory =
-            unsafe { CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)? };
-        let encoders = unsafe { factory.CreateComponentEnumerator(WICEncoder.0 as u32, 0)? };
         let mut formats = Vec::new();
+        let factory: IWICImagingFactory = match unsafe {
+            CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)
+        } {
+            Ok(factory) => factory,
+            Err(_) => return Ok(builtin_export_formats(formats)),
+        };
+        let encoders = match unsafe { factory.CreateComponentEnumerator(WICEncoder.0 as u32, 0) } {
+            Ok(encoders) => encoders,
+            Err(_) => return Ok(builtin_export_formats(formats)),
+        };
 
         loop {
             let mut entries = [None];
@@ -84,17 +114,18 @@ impl ImageDocument {
             };
             if formats
                 .iter()
-                .any(|format: &ExportFormat| format.container == container)
+                .any(|format: &ExportFormat| format.backend == ExportBackend::Wic(container))
             {
                 continue;
             }
             formats.push(ExportFormat {
-                container,
+                backend: ExportBackend::Wic(container),
                 name,
                 extensions,
             });
         }
 
+        formats = builtin_export_formats(formats);
         formats.sort_by_key(|format| {
             let extension = format.extension();
             let rank = match extension {
@@ -191,9 +222,23 @@ impl ImageDocument {
             }
             return decode_jxl(&path, should_cancel, request);
         }
+        let builtin_format = builtin_codec::format_for_path(&path);
+        if let Some(format) =
+            builtin_format.filter(|format| builtin_codec::should_decode_before_wic(*format))
+        {
+            return builtin_codec::decode(&path, format, should_cancel, request);
+        }
         let factory = match wic_factory {
             Some(factory) => factory.clone(),
-            None => Self::create_wic_factory()?,
+            None => match Self::create_wic_factory() {
+                Ok(factory) => factory,
+                Err(error) => {
+                    if let Some(format) = builtin_format {
+                        return builtin_codec::decode(&path, format, should_cancel, request);
+                    }
+                    return Err(error);
+                }
+            },
         };
         let wide = wide_path(&path);
         let decoder = unsafe {
@@ -202,7 +247,16 @@ impl ImageDocument {
                 None,
                 GENERIC_READ,
                 WICDecodeMetadataCacheOnDemand,
-            )?
+            )
+        };
+        let decoder = match decoder {
+            Ok(decoder) => decoder,
+            Err(error) => {
+                if let Some(format) = builtin_format {
+                    return builtin_codec::decode(&path, format, should_cancel, request);
+                }
+                return Err(error.into());
+            }
         };
         let extension = path
             .extension()

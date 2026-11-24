@@ -58,7 +58,7 @@ fn fixture(path: &Path) -> ImageDocument {
     );
     document.source = None;
     let png = ExportFormat {
-        container: GUID_ContainerFormatPng,
+        backend: ExportBackend::Wic(GUID_ContainerFormatPng),
         name: "PNG".into(),
         extensions: vec!["png".into()],
     };
@@ -81,7 +81,7 @@ fn progressive_export_preserves_native_pixels_after_rotation_and_crop() {
     preview.rotate_right();
     preview.crop(1, 2, 5, 7);
     let png = ExportFormat {
-        container: GUID_ContainerFormatPng,
+        backend: ExportBackend::Wic(GUID_ContainerFormatPng),
         name: "PNG".into(),
         extensions: vec!["png".into()],
     };
@@ -384,7 +384,7 @@ fn streamed_jpeg_export_flattens_transparency_on_white() {
     );
     document.source = None;
     let png = ExportFormat {
-        container: GUID_ContainerFormatPng,
+        backend: ExportBackend::Wic(GUID_ContainerFormatPng),
         name: "PNG".into(),
         extensions: vec!["png".into()],
     };
@@ -393,7 +393,7 @@ fn streamed_jpeg_export_flattens_transparency_on_white() {
         ImageDocument::decode_request(&source, &|| false, None, &DecodeRequest::preview((2, 2)))
             .unwrap();
     let jpeg = ExportFormat {
-        container: GUID_ContainerFormatJpeg,
+        backend: ExportBackend::Wic(GUID_ContainerFormatJpeg),
         name: "JPEG".into(),
         extensions: vec!["jpg".into()],
     };

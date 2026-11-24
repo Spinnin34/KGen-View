@@ -86,6 +86,8 @@ jobs:
           .\scripts\generate-release-notes.ps1 `
             -Channel '${{ steps.metadata.outputs.channel }}' `
             -BuildSha '${{ github.sha }}' `
+            -ReleaseTag '${{ steps.metadata.outputs.tag }}' `
+            -Version '${{ steps.metadata.outputs.version }}' `
             -OutputPath (Join-Path $env:RUNNER_TEMP 'KGen-release-notes.md')
       - name: Publish GitHub release
         shell: pwsh

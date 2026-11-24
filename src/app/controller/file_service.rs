@@ -330,7 +330,9 @@ mod tests {
         let size = document.original_size;
         let id = document.id;
         let format = ExportFormat {
-            container: windows::Win32::Graphics::Imaging::GUID_ContainerFormatPng,
+            backend: crate::imaging::ExportBackend::Wic(
+                windows::Win32::Graphics::Imaging::GUID_ContainerFormatPng,
+            ),
             name: "PNG".into(),
             extensions: vec!["png".into()],
         };

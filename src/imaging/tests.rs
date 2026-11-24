@@ -416,7 +416,7 @@ fn wic_round_trip_png() {
         std::process::id()
     ));
     let png_format = ExportFormat {
-        container: windows::Win32::Graphics::Imaging::GUID_ContainerFormatPng,
+        backend: ExportBackend::Wic(windows::Win32::Graphics::Imaging::GUID_ContainerFormatPng),
         name: "PNG".into(),
         extensions: vec!["png".into()],
     };

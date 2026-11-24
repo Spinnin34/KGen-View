@@ -108,7 +108,7 @@ impl Layout {
         let width = (work.right - work.left - 12).max(1) as f32;
         let scale = (dpi.max(1) as f32 / 96.0).min(width / WIDTH as f32);
         let height = (work.bottom - work.top) as f32 / scale;
-        let max_rows = ((height as i32 - LIST_TOP - FOOTER_HEIGHT - 12) / ROW_HEIGHT).clamp(1, 9);
+        let max_rows = ((height as i32 - LIST_TOP - FOOTER_HEIGHT - 12) / ROW_HEIGHT).max(1);
         Self {
             scale,
             visible_rows: rows.min(max_rows as usize).max(1) as i32,

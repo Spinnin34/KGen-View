@@ -63,13 +63,20 @@ KGen View abre directamente los siguientes formatos:
 | TIFF | `.tif`, `.tiff` |
 | Iconos | `.ico` |
 | WebP | `.webp` |
+| Truevision TGA | `.tga` |
+| Portable Anymap | `.pbm`, `.pam`, `.pgm`, `.ppm`, `.pnm` |
+| QOI | `.qoi` |
+| Radiance HDR | `.hdr` |
+| OpenEXR | `.exr` |
+| Farbfeld | `.ff` |
+| AVIF | `.avif`, si hay un códec WIC compatible en Windows |
 | HEIF / HEIC | `.heif`, `.heic` |
 | JPEG XL | `.jxl` |
 | SVG | `.svg` |
 | Otros codecs WIC | `.wdp`, `.jxr`, `.hdp`, `.dds`, si el codec está disponible en Windows |
 | Archivos de imágenes | `.zip`, `.cbz` (imágenes compatibles dentro del archivo) |
 
-WebP y HEIF/HEIC dependen de los codecs instalados en Windows. JPEG XL se decodifica dentro de KGen View, sin necesitar un codec adicional del sistema. La aplicación muestra un aviso cuando falta un codec necesario para WebP o HEIF/HEIC.
+TGA, PBM/PAM/PGM/PPM/PNM, QOI, Radiance HDR, OpenEXR, Farbfeld y WebP tienen lectura y escritura integradas en KGen View. HDR y OpenEXR se adaptan al espacio de visualización de 8 bits de la aplicación; al guardarlos desde KGen no se conserva toda la profundidad ni el rango HDR de origen. AVIF, HEIF/HEIC, JPEG XR y DDS dependen de los códecs WIC disponibles en Windows. JPEG XL se decodifica dentro de KGen View, sin necesitar un códec adicional del sistema.
 
 ### Vídeo
 
@@ -79,7 +86,7 @@ Acerca el ratón al borde inferior para ver los controles flotantes. Al alejarlo
 
 ### Exportación
 
-En **Editar → Convertir formato**, elige uno de los formatos que Windows tiene disponibles mediante WIC en ese equipo. La lista puede incluir PNG, JPEG, BMP, TIFF, GIF, JPEG XR y otros formatos si hay un codificador instalado. La ventana permite guardar una copia sin cambiar el archivo abierto y muestra una animación mientras se convierte. En imágenes animadas o documentos multipágina se exporta el fotograma visible.
+En **Editar → Convertir formato**, elige un formato disponible mediante los codecs integrados de KGen o los codificadores WIC instalados en Windows. La lista incluye formatos comunes como PNG, JPEG, BMP, TIFF, GIF, TGA, QOI, PNM, Radiance HDR, OpenEXR y Farbfeld, además de formatos que WIC aporte en ese equipo. La ventana permite guardar una copia sin cambiar el archivo abierto y muestra una animación mientras se convierte. En imágenes animadas o documentos multipágina se exporta el fotograma visible.
 
 La opción **Guardar como** también ofrece los codificadores disponibles y conserva su comportamiento habitual: la imagen abierta pasa a usar el archivo guardado.
 
