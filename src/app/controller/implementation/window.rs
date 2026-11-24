@@ -157,13 +157,17 @@ pub fn run() -> Result<(), WinError> {
     }
     let mut message = MSG::default();
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.as_bool() {
-        let tools = unsafe {
+        let (tools, conversion) = unsafe {
             let state = &*raw_state;
-            [state.histogram_window, state.canvas_window]
+            (
+                [state.histogram_window, state.canvas_window],
+                state.conversion_window,
+            )
         };
-        if tools
-            .into_iter()
-            .any(|window| crate::platform::image_tools::tool_message(window, &message))
+        if crate::platform::conversion_dialog::tool_message(conversion, &message)
+            || tools
+                .into_iter()
+                .any(|window| crate::platform::image_tools::tool_message(window, &message))
         {
             continue;
         }

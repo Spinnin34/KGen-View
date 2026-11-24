@@ -1,38 +1,22 @@
 use super::*;
 
-pub(super) unsafe fn begin_conversion(hwnd: HWND, state: &mut DialogState) {
-    if state.busy {
+pub(super) fn begin_conversion(hwnd: HWND, state: &DialogState) {
+    if state.busy.get() {
         return;
     }
-    let selected = unsafe {
-        SendMessageW(
-            state.format_combo,
-            CB_GETCURSEL,
-            Some(WPARAM(0)),
-            Some(LPARAM(0)),
-        )
-    }
-    .0;
-    if selected < 0 || selected as usize >= state.formats.len() {
+    let selected =
+        unsafe { SendMessageW(state.controls.get().formats, LB_GETCURSEL, None, None) }.0;
+    let Some(format) = state.formats.get(selected as usize).cloned() else {
         return;
-    }
-    let format = state.formats[selected as usize].clone();
-    let source_extension = state
-        .source_path
+    };
+    let source = &state.snapshot.path;
+    let source_extension = source
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    let stem = state
-        .source_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
+    let stem = source.file_stem().unwrap_or_default().to_string_lossy();
     let suffix = if format.accepts_extension(source_extension) {
-        if state.language == Language::Spanish {
-            "-convertida"
-        } else {
-            "-converted"
-        }
+        state.label("-convertida", "-converted")
     } else {
         ""
     };
@@ -76,21 +60,17 @@ pub(super) unsafe fn begin_conversion(hwnd: HWND, state: &mut DialogState) {
         path.set_extension(format.extension());
     }
 
-    state.busy = true;
-    state.dots = 0;
+    if unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } != std::ptr::from_ref(state) as isize {
+        return;
+    }
+    set_busy(hwnd, state, true);
+    state.dots.set(0);
+    state.set_status(
+        state.label("Convirtiendo…", "Converting…"),
+        state.palette.muted,
+    );
     unsafe {
-        let _ = EnableWindow(state.format_combo, false);
-        let _ = EnableWindow(state.format_arrow_button, false);
-        let _ = EnableWindow(state.convert_button, false);
-        let _ =
-            windows::Win32::UI::WindowsAndMessaging::SetTimer(Some(hwnd), TIMER_DOTS, 320, None);
-        let status = if state.language == Language::Spanish {
-            "Convirtiendo…"
-        } else {
-            "Converting…"
-        };
-        let text = wide(status);
-        let _ = SetWindowTextW(state.status, PCWSTR(text.as_ptr()));
+        let _ = SetTimer(Some(hwnd), TIMER_CONVERSION, 320, None);
     }
     let snapshot = state.snapshot.clone();
     let completion = state.completion.clone();
@@ -119,25 +99,84 @@ pub(super) unsafe fn begin_conversion(hwnd: HWND, state: &mut DialogState) {
             if let Ok(mut slot) = completion.lock() {
                 *slot = Some(result);
             }
-            let target = HWND(hwnd_value as *mut c_void);
+            let target = HWND(hwnd_value as *mut _);
             unsafe {
                 let _ = PostMessageW(Some(target), WM_CONVERSION_DONE, WPARAM(0), LPARAM(0));
             }
         });
     if let Err(error) = worker {
-        state.busy = false;
+        finish_conversion(
+            hwnd,
+            state,
+            Err(format!(
+                "{} {error}",
+                state.label(
+                    "No se pudo iniciar la conversión.",
+                    "Could not start the conversion."
+                )
+            )),
+        );
+    }
+}
+
+pub(super) fn conversion_tick(hwnd: HWND, state: &DialogState, animate: bool) {
+    if !state.busy.get() {
+        return;
+    }
+    let result = state
+        .completion
+        .try_lock()
+        .ok()
+        .and_then(|mut result| result.take());
+    if let Some(result) = result {
+        finish_conversion(hwnd, state, result);
+    } else if animate {
+        let dots = (state.dots.get() + 1) % 3;
+        state.dots.set(dots);
+        let label = state.label("Convirtiendo", "Converting");
+        state.set_status(
+            &format!("{label}{}", ".".repeat(dots + 1)),
+            state.palette.muted,
+        );
+    }
+}
+
+fn finish_conversion(hwnd: HWND, state: &DialogState, result: Result<PathBuf, String>) {
+    unsafe {
+        let _ = KillTimer(Some(hwnd), TIMER_CONVERSION);
+    }
+    set_busy(hwnd, state, false);
+    match result {
+        Ok(path) => {
+            let name = path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy();
+            let label = state.label("Guardado como", "Saved as");
+            state.set_status(&format!("{label} {name}"), state.palette.text);
+        }
+        Err(error) => state.set_status(&error, if state.dark { 0xffaca3 } else { 0xa02921 }),
+    }
+}
+
+fn set_busy(hwnd: HWND, state: &DialogState, busy: bool) {
+    state.busy.set(busy);
+    let controls = state.controls.get();
+    let focus = unsafe { GetFocus() };
+    if busy && (focus == controls.formats || focus == controls.convert) {
         unsafe {
-            let _ = windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(hwnd), TIMER_DOTS);
-            let _ = EnableWindow(state.format_combo, true);
-            let _ = EnableWindow(state.format_arrow_button, true);
-            let _ = EnableWindow(state.convert_button, true);
-            let message = if state.language == Language::Spanish {
-                format!("No se pudo iniciar la conversión: {error}")
-            } else {
-                format!("Could not start conversion: {error}")
-            };
-            let text = wide(&message);
-            let _ = SetWindowTextW(state.status, PCWSTR(text.as_ptr()));
+            let _ = SetFocus(Some(controls.close));
+        }
+    }
+    for control in [controls.formats, controls.convert] {
+        unsafe {
+            let _ = EnableWindow(control, !busy);
+            let _ = InvalidateRect(Some(control), None, false);
+        }
+    }
+    if !busy && unsafe { GetActiveWindow() } == hwnd && (focus.0.is_null() || focus == hwnd) {
+        unsafe {
+            let _ = SetFocus(Some(controls.formats));
         }
     }
 }

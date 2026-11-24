@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::theme::MenuPalette;
 use windows::Win32::{
     Graphics::{
         Direct2D::ID2D1Factory, DirectWrite::DWRITE_TEXT_ALIGNMENT_TRAILING, Gdi::ClientToScreen,
@@ -421,6 +422,7 @@ impl MenuPainter {
         highlight: Option<MenuHit>,
         back: bool,
     ) {
+        const PALETTE: MenuPalette = MenuPalette::for_dark(true);
         let scale = layout.scale;
         let width = layout.size.cx as f32;
         let height = layout.size.cy as f32;
@@ -445,29 +447,29 @@ impl MenuPainter {
         };
         let right = width / scale;
         let bounds = PxRect::new(0.5, 0.5, width - 0.5, height - 0.5);
-        fill(bounds, rgb(0x202024), 8.0);
+        fill(bounds, rgb(PALETTE.surface), 8.0);
         unsafe {
-            brush.SetColor(&HAIRLINE);
+            brush.SetColor(&rgb(PALETTE.border));
             target.DrawRoundedRectangle(&bounds.as_rounded(8.0 * scale), brush, 1.0, None);
         }
-        fill(r(12.0, 40.0, right - 12.0, 40.8), HAIRLINE, 0.0);
+        fill(r(12.0, 40.0, right - 12.0, 40.8), rgb(PALETTE.border), 0.0);
         let close = r(right - 37.0, 7.0, right - 7.0, 36.0);
         if highlight == Some(MenuHit::Close) {
-            fill(close, HOVER, 5.0);
+            fill(close, rgb(PALETTE.hover), 5.0);
         }
-        text(&[0xe711], close, &self.icons, MUTED);
+        text(&[0xe711], close, &self.icons, rgb(PALETTE.muted));
         if back {
             let back = r(7.0, 7.0, 37.0, 36.0);
             if highlight == Some(MenuHit::Back) {
-                fill(back, HOVER, 5.0);
+                fill(back, rgb(PALETTE.hover), 5.0);
             }
-            text(&[0xe72b], back, &self.icons, MUTED);
+            text(&[0xe72b], back, &self.icons, rgb(PALETTE.muted));
         }
         text(
             &title.encode_utf16().collect::<Vec<_>>(),
             r(if back { 42.0 } else { 15.0 }, 4.0, right - 40.0, 39.0),
             &self.title,
-            INK,
+            rgb(PALETTE.text),
         );
         for (index, row) in rows
             .iter()
@@ -479,9 +481,9 @@ impl MenuPainter {
             let bottom = top + 31.0;
             let rect = r(7.0, top, right - 8.0, bottom);
             if highlight == Some(MenuHit::Row(index)) {
-                fill(rect, HOVER, 5.0);
+                fill(rect, rgb(PALETTE.hover), 5.0);
             } else if row.selected {
-                fill(rect, rgb(0x342a26), 5.0);
+                fill(rect, rgb(PALETTE.selected), 5.0);
             }
             let tail = if row.detail.is_empty() {
                 right - 36.0
@@ -492,14 +494,18 @@ impl MenuPainter {
                 &row.label.encode_utf16().collect::<Vec<_>>(),
                 r(15.0, top, tail, bottom),
                 &self.text,
-                if row.selected { HOT_ACCENT } else { INK },
+                rgb(if row.selected {
+                    PALETTE.selected_text
+                } else {
+                    PALETTE.text
+                }),
             );
             if !row.detail.is_empty() {
                 text(
                     &row.detail.encode_utf16().collect::<Vec<_>>(),
                     r(tail + 2.0, top, right - 35.0, bottom),
                     &self.detail,
-                    MUTED,
+                    rgb(PALETTE.muted),
                 );
             }
             let glyph = if row.selected {
@@ -514,7 +520,11 @@ impl MenuPainter {
                     &[glyph],
                     r(right - 31.0, top, right - 13.0, bottom),
                     &self.icons,
-                    if row.selected { ACCENT } else { MUTED },
+                    rgb(if row.selected {
+                        PALETTE.accent
+                    } else {
+                        PALETTE.muted
+                    }),
                 );
             }
         }

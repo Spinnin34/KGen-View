@@ -1,5 +1,44 @@
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 
+pub struct MenuPalette {
+    pub surface: u32,
+    pub border: u32,
+    pub hover: u32,
+    pub text: u32,
+    pub muted: u32,
+    pub selected: u32,
+    pub selected_text: u32,
+    pub accent: u32,
+}
+
+impl MenuPalette {
+    pub const fn for_dark(dark: bool) -> Self {
+        if dark {
+            Self {
+                surface: 0x202024,
+                border: 0x3d3d42,
+                hover: 0x36363d,
+                text: 0xf4f4f4,
+                muted: 0xb4b4b8,
+                selected: 0x342a26,
+                selected_text: 0xffbb89,
+                accent: 0xff8d42,
+            }
+        } else {
+            Self {
+                surface: 0xfafafb,
+                border: 0xd2d6de,
+                hover: 0xeaebef,
+                text: 0x212127,
+                muted: 0x565660,
+                selected: 0xf9e9df,
+                selected_text: 0x8c3815,
+                accent: 0xa54214,
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub canvas: D2D1_COLOR_F,

@@ -7,24 +7,43 @@ pub(super) unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if message == WM_NCCREATE {
-        let create = lparam.0 as *const CREATESTRUCTW;
-        unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, (*create).lpCreateParams as isize) };
+        let create = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
+        let pointer = create.lpCreateParams.cast::<DialogState>();
+        // The HWND owns one reference until WM_NCDESTROY.
+        unsafe {
+            Rc::increment_strong_count(pointer);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, pointer as isize);
+            return DefWindowProcW(hwnd, message, wparam, lparam);
+        }
     }
-    let pointer = unsafe {
-        windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWLP_USERDATA)
-            as *mut DialogState
-    };
+    let pointer = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const DialogState;
     if pointer.is_null() {
         return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
     }
-    let state = unsafe { &mut *pointer };
+    // Sending a native message or showing the save dialog can reenter this procedure.
+    let state = unsafe {
+        Rc::increment_strong_count(pointer);
+        Rc::from_raw(pointer)
+    };
     match message {
-        WM_CREATE => {
-            unsafe { create_controls(hwnd, state) };
-            LRESULT(0)
-        }
+        WM_CREATE => match create_controls(hwnd, &state) {
+            Ok(controls) => {
+                state.controls.set(controls);
+                position_controls(hwnd, &state);
+                unsafe {
+                    SendMessageW(
+                        controls.formats,
+                        LB_SETCURSEL,
+                        Some(WPARAM(state.initial_format)),
+                        None,
+                    );
+                }
+                LRESULT(0)
+            }
+            Err(_) => LRESULT(-1),
+        },
         WM_COMMAND if (wparam.0 & 0xffff) == ID_CONVERT => {
-            unsafe { begin_conversion(hwnd, state) };
+            begin_conversion(hwnd, &state);
             LRESULT(0)
         }
         WM_COMMAND if (wparam.0 & 0xffff) == ID_CLOSE => {
@@ -33,202 +52,95 @@ pub(super) unsafe extern "system" fn window_proc(
             }
             LRESULT(0)
         }
-        WM_COMMAND if (wparam.0 & 0xffff) == ID_FORMAT_ARROW => {
+        WM_DRAWITEM => {
+            if let Some(item) = unsafe { (lparam.0 as *const DRAWITEMSTRUCT).as_ref() } {
+                draw_item(item, &state);
+            }
+            LRESULT(1)
+        }
+        WM_DPICHANGED => {
+            let suggested = unsafe { &*(lparam.0 as *const RECT) };
+            let work = work_area(suggested);
+            let layout = Layout::new((wparam.0 & 0xffff) as u32, work, state.formats.len());
+            let old_fonts = state.fonts.replace(Fonts::new(layout));
+            state.layout.set(layout);
             unsafe {
-                SendMessageW(
-                    state.format_combo,
-                    CB_SHOWDROPDOWN,
-                    Some(WPARAM(1)),
-                    Some(LPARAM(0)),
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    suggested
+                        .left
+                        .clamp(work.left, (work.right - layout.width()).max(work.left)),
+                    suggested
+                        .top
+                        .clamp(work.top, (work.bottom - layout.height()).max(work.top)),
+                    layout.width(),
+                    layout.height(),
+                    SWP_NOZORDER | SWP_NOACTIVATE,
                 );
             }
+            if !state.controls.get().formats.0.is_null() {
+                position_controls(hwnd, &state);
+            }
+            drop(old_fonts);
             LRESULT(0)
         }
-        WM_MEASUREITEM => {
-            let measure = lparam.0 as *mut MEASUREITEMSTRUCT;
-            if let Some(measure) = unsafe { measure.as_mut() }
-                && measure.CtlType == DRAWITEMSTRUCT_CTL_TYPE(ODT_COMBOBOX)
+        WM_NCHITTEST => {
+            let mut point = POINT {
+                x: lparam.0 as i16 as i32,
+                y: (lparam.0 >> 16) as i16 as i32,
+            };
+            if unsafe { ScreenToClient(hwnd, &mut point) }.as_bool()
+                && (0..state.layout.get().px(41)).contains(&point.y)
             {
-                measure.itemHeight =
-                    scaled(34, unsafe { GetDpiForWindow(hwnd) }.max(96) as f32 / 96.0) as u32;
-                LRESULT(1)
+                LRESULT(HTCAPTION as isize)
             } else {
                 unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
             }
         }
-        WM_DRAWITEM => {
-            let item = lparam.0 as *const DRAWITEMSTRUCT;
-            if let Some(item) = unsafe { item.as_ref() } {
-                unsafe { draw_item(item, state) };
-                LRESULT(1)
-            } else {
-                LRESULT(0)
-            }
-        }
-        WM_NCHITTEST => {
-            let mut point = POINT {
-                x: (lparam.0 as u32 as u16 as i16) as i32,
-                y: ((lparam.0 as u32 >> 16) as u16 as i16) as i32,
-            };
-            unsafe {
-                let _ = ScreenToClient(hwnd, &mut point);
-                if point.y < scaled(48, GetDpiForWindow(hwnd).max(96) as f32 / 96.0) {
-                    LRESULT(HTCAPTION as isize)
-                } else {
-                    DefWindowProcW(hwnd, message, wparam, lparam)
-                }
-            }
-        }
-        WM_TIMER if wparam.0 == TIMER_DOTS => {
-            state.dots = (state.dots + 1) % 4;
-            let label = if state.language == Language::Spanish {
-                "Convirtiendo"
-            } else {
-                "Converting"
-            };
-            let text = wide(&format!("{label}{}", ".".repeat(state.dots + 1)));
-            unsafe {
-                let _ = SetWindowTextW(state.status, PCWSTR(text.as_ptr()));
-            }
+        WM_TIMER if wparam.0 == TIMER_CONVERSION => {
+            conversion_tick(hwnd, &state, true);
             LRESULT(0)
         }
         WM_CONVERSION_DONE => {
-            unsafe {
-                let _ = windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(hwnd), TIMER_DOTS);
-            }
-            let result = state
-                .completion
-                .lock()
-                .ok()
-                .and_then(|mut slot| slot.take());
-            state.busy = false;
-            unsafe {
-                let _ = EnableWindow(state.format_combo, true);
-                let _ = EnableWindow(state.format_arrow_button, true);
-                let _ = EnableWindow(state.convert_button, true);
-            }
-            let message = match result {
-                Some(Ok(path)) => {
-                    let label = if state.language == Language::Spanish {
-                        "Guardado en"
-                    } else {
-                        "Saved to"
-                    };
-                    format!("{label}: {}", compact_path(&path))
-                }
-                Some(Err(error)) => error,
-                None => {
-                    if state.language == Language::Spanish {
-                        "No se recibió el resultado.".into()
-                    } else {
-                        "No result was received.".into()
-                    }
-                }
-            };
-            let text = wide(&message);
-            unsafe {
-                let _ = SetWindowTextW(state.status, PCWSTR(text.as_ptr()));
-            }
+            conversion_tick(hwnd, &state, false);
             LRESULT(0)
         }
-        WM_CTLCOLORSTATIC => {
-            let hdc = windows::Win32::Graphics::Gdi::HDC(wparam.0 as *mut c_void);
-            let control = HWND(lparam.0 as *mut c_void);
-            let color = if control == state.hint
-                || control == state.file_label
-                || control == state.format_label
-            {
-                state.muted
+        WM_CTLCOLORSTATIC | WM_CTLCOLORLISTBOX => {
+            let hdc = HDC(wparam.0 as *mut _);
+            let control = HWND(lparam.0 as *mut _);
+            let controls = state.controls.get();
+            let text_color = if control == controls.status {
+                state.status_color.get()
+            } else if control == controls.formats || control == controls.source_name {
+                state.palette.text
             } else {
-                state.foreground
+                state.palette.muted
             };
+            let surface = colorref(state.palette.surface);
             unsafe {
-                SetBkMode(hdc, TRANSPARENT);
-                SetTextColor(hdc, color);
+                SetBkColor(hdc, surface);
+                SetDCBrushColor(hdc, surface);
+                SetTextColor(hdc, colorref(text_color));
+                LRESULT(GetStockObject(DC_BRUSH).0 as isize)
             }
-            LRESULT(state.background.0 as isize)
         }
-        WM_ERASEBKGND => {
-            let hdc = windows::Win32::Graphics::Gdi::HDC(wparam.0 as *mut c_void);
-            let mut rect = RECT::default();
-            unsafe {
-                let _ = GetClientRect(hwnd, &mut rect);
-                FillRect(hdc, &rect, state.background);
-                let scale = GetDpiForWindow(hwnd).max(96) as f32 / 96.0;
-                FillRect(hdc, &scaled_rect(0, 0, 600, 46, scale), state.header);
-                FillRect(
-                    hdc,
-                    &RECT {
-                        left: 0,
-                        top: scaled(46, scale),
-                        right: rect.right,
-                        bottom: scaled(49, scale),
-                    },
-                    state.accent,
-                );
-                let source = scaled_rect(28, 151, 572, 210, scale);
-                FillRect(hdc, &source, state.raised);
-                FrameRect(hdc, &source, state.border);
-                FillRect(hdc, &scaled_rect(28, 151, 32, 210, scale), state.accent);
-                let status = scaled_rect(28, 305, 572, 358, scale);
-                FillRect(hdc, &status, state.raised);
-                FrameRect(hdc, &status, state.border);
-                FillRect(hdc, &scaled_rect(28, 305, 32, 358, scale), state.accent);
-            }
-            LRESULT(1)
-        }
+        WM_ERASEBKGND => LRESULT(1),
         WM_PAINT => {
-            let mut paint = PAINTSTRUCT::default();
-            let hdc = unsafe { BeginPaint(hwnd, &mut paint) };
-            let mut title = wide("KGen View");
-            let scale = unsafe { GetDpiForWindow(hwnd) }.max(96) as f32 / 96.0;
-            let mut rect = scaled_rect(28, 8, 165, 40, scale);
-            let mut section = wide("CONVERSIÓN DE IMAGEN");
-            unsafe {
-                SetBkMode(hdc, TRANSPARENT);
-                SetTextColor(hdc, state.foreground);
-                let old_font = SelectObject(hdc, HGDIOBJ(state.heading_font.0));
-                DrawTextW(
-                    hdc,
-                    &mut title,
-                    &mut rect,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-                );
-                SelectObject(hdc, old_font);
-                SetTextColor(hdc, state.accent_color);
-                let mut section_rect = scaled_rect(180, 10, 350, 38, scale);
-                DrawTextW(
-                    hdc,
-                    &mut section,
-                    &mut section_rect,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-                );
-                let _ = EndPaint(hwnd, &paint);
-            }
+            paint(hwnd, &state);
             LRESULT(0)
         }
-        WM_CLOSE => {
-            unsafe {
-                let _ = DestroyWindow(hwnd);
-            }
-            LRESULT(0)
-        }
-        WM_NCDESTROY => {
-            unsafe {
-                let _ = PostMessageW(
-                    Some(state.owner),
-                    WM_CONVERSION_CLOSED,
-                    WPARAM(0),
-                    LPARAM(hwnd.0 as isize),
-                );
-            }
-            state.destroyed.store(true, Ordering::Release);
-            unsafe {
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-                destroy_state(pointer);
-                DefWindowProcW(hwnd, message, wparam, lparam)
-            }
-        }
+        WM_NCDESTROY => unsafe {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            let _ = PostMessageW(
+                Some(state.owner),
+                WM_CONVERSION_CLOSED,
+                WPARAM(0),
+                LPARAM(hwnd.0 as isize),
+            );
+            drop(Rc::from_raw(pointer));
+            DefWindowProcW(hwnd, message, wparam, lparam)
+        },
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
     }
 }
