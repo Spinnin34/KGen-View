@@ -1,9 +1,14 @@
 use super::*;
+use std::collections::HashMap;
 use windows::Win32::UI::{
     Controls::WM_MOUSELEAVE,
     Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent},
     Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
 };
+
+thread_local! {
+    static HOVERED_ITEMS: RefCell<HashMap<isize, isize>> = RefCell::default();
+}
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Controls {
@@ -112,12 +117,17 @@ pub(super) fn create_controls(hwnd: HWND, state: &DialogState) -> windows::core:
         0,
         SS_NOPREFIX,
     )?;
+    let scrolling = if state.formats.len() > state.layout.get().visible_rows as usize {
+        WS_VSCROLL
+    } else {
+        WINDOW_STYLE::default()
+    };
     let formats = create(
         w!("LISTBOX"),
         "",
         ID_FORMAT,
         WS_TABSTOP
-            | WS_VSCROLL
+            | scrolling
             | WINDOW_STYLE(
                 LBS_NOTIFY as u32
                     | LBS_HASSTRINGS as u32
@@ -239,6 +249,27 @@ pub(super) fn position_controls(hwnd: HWND, state: &DialogState) {
         layout.rect(WIDTH - 123, bottom + 20, WIDTH - 14, bottom + 54),
     );
     position(controls.close, layout.rect(WIDTH - 42, 7, WIDTH - 8, 36));
+    let style = unsafe { GetWindowLongPtrW(controls.formats, GWL_STYLE) };
+    let needs_scrollbar = state.formats.len() > layout.visible_rows as usize;
+    let updated_style = if needs_scrollbar {
+        style | WS_VSCROLL.0 as isize
+    } else {
+        style & !(WS_VSCROLL.0 as isize)
+    };
+    if updated_style != style {
+        unsafe {
+            SetWindowLongPtrW(controls.formats, GWL_STYLE, updated_style);
+            let _ = SetWindowPos(
+                controls.formats,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+        }
+    }
     let diameter = layout.px(CORNER_RADIUS * 2);
     unsafe {
         let region = CreateRoundRectRgn(0, 0, layout.width(), layout.height(), diameter, diameter);
@@ -267,13 +298,79 @@ unsafe extern "system" fn track_hover(
                     dwHoverTime: 0,
                 };
                 let _ = TrackMouseEvent(&mut event);
-                let _ = InvalidateRect(Some(hwnd), None, false);
+                let key = hwnd.0 as isize;
+                let previous =
+                    HOVERED_ITEMS.with(|items| items.borrow().get(&key).copied().unwrap_or(-1));
+                let current = if GetDlgCtrlID(hwnd) as usize == ID_FORMAT {
+                    let point = POINT {
+                        x: lparam.0 as u16 as i32,
+                        y: (lparam.0 >> 16) as u16 as i32,
+                    };
+                    let hit = SendMessageW(
+                        hwnd,
+                        LB_ITEMFROMPOINT,
+                        Some(WPARAM(0)),
+                        Some(LPARAM(
+                            ((point.y as u16 as usize) << 16 | point.x as u16 as usize) as isize,
+                        )),
+                    )
+                    .0;
+                    if (hit >> 16) == 0 { hit as isize } else { -1 }
+                } else {
+                    0
+                };
+                if previous != current {
+                    HOVERED_ITEMS.with(|items| {
+                        items.borrow_mut().insert(key, current);
+                    });
+                    if GetDlgCtrlID(hwnd) as usize == ID_FORMAT {
+                        for index in [previous, current] {
+                            if index >= 0 {
+                                let mut rect = RECT::default();
+                                if SendMessageW(
+                                    hwnd,
+                                    LB_GETITEMRECT,
+                                    Some(WPARAM(index as usize)),
+                                    Some(LPARAM((&mut rect as *mut RECT) as isize)),
+                                )
+                                .0 != LB_ERR as isize
+                                {
+                                    let _ = InvalidateRect(Some(hwnd), Some(&rect), false);
+                                }
+                            }
+                        }
+                    } else {
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                    }
+                }
             }
             WM_MOUSELEAVE => {
-                let _ = InvalidateRect(Some(hwnd), None, false);
+                let key = hwnd.0 as isize;
+                let previous =
+                    HOVERED_ITEMS.with(|items| items.borrow_mut().insert(key, -1).unwrap_or(-1));
+                if previous != -1 {
+                    if GetDlgCtrlID(hwnd) as usize == ID_FORMAT {
+                        let mut rect = RECT::default();
+                        if SendMessageW(
+                            hwnd,
+                            LB_GETITEMRECT,
+                            Some(WPARAM(previous as usize)),
+                            Some(LPARAM((&mut rect as *mut RECT) as isize)),
+                        )
+                        .0 != LB_ERR as isize
+                        {
+                            let _ = InvalidateRect(Some(hwnd), Some(&rect), false);
+                        }
+                    } else {
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                    }
+                }
             }
             WM_NCDESTROY => {
                 let _ = RemoveWindowSubclass(hwnd, Some(track_hover), id);
+                HOVERED_ITEMS.with(|items| {
+                    items.borrow_mut().remove(&(hwnd.0 as isize));
+                });
             }
             _ => {}
         }
@@ -324,7 +421,18 @@ pub(super) fn draw_item(item: &DRAWITEMSTRUCT, state: &DialogState) {
     let layout = state.layout.get();
     let palette = &state.palette;
     let fonts = state.fonts.borrow();
-    let hovered = is_hovered(item);
+    let hovered = HOVERED_ITEMS.with(|items| {
+        items
+            .borrow()
+            .get(&(item.hwndItem.0 as isize))
+            .copied()
+            .unwrap_or(-1)
+            == if item.CtlID as usize == ID_FORMAT {
+                item.itemID as isize
+            } else {
+                0
+            }
+    });
     let focused = item.itemState.0 & ODS_FOCUS.0 != 0;
     let disabled = item.itemState.0 & ODS_DISABLED.0 != 0;
     let selected = item.itemState.0 & ODS_SELECTED.0 != 0;
@@ -432,17 +540,6 @@ pub(super) fn draw_item(item: &DRAWITEMSTRUCT, state: &DialogState) {
         ("\u{e711}", fonts.icon)
     };
     text(hdc, label, rect, font, color, DT_CENTER);
-}
-
-fn is_hovered(item: &DRAWITEMSTRUCT) -> bool {
-    let mut point = POINT::default();
-    unsafe {
-        GetCursorPos(&mut point).is_ok()
-            && WindowFromPoint(point) == item.hwndItem
-            && ScreenToClient(item.hwndItem, &mut point).as_bool()
-            && (item.rcItem.left..item.rcItem.right).contains(&point.x)
-            && (item.rcItem.top..item.rcItem.bottom).contains(&point.y)
-    }
 }
 
 fn fill(hdc: HDC, rect: &RECT, color: u32) {
