@@ -159,7 +159,7 @@ if ($components.Count -gt 0) {
 $notes.Add('## Validación de calidad')
 $notes.Add('- Formato del código: ``cargo fmt -- --check``.')
 $notes.Add('- Análisis estático: ``cargo clippy --locked --all-targets -- -D warnings -A clippy::too_many_arguments``.')
-$notes.Add('- Pruebas automatizadas: ``cargo test --locked``.')
+$notes.Add('- Pruebas automatizadas: ``cargo test --locked -- --test-threads=1``.')
 $notes.Add('- Compilación de distribución: ``cargo build --locked --release``.')
 $notes.Add('- GitHub Actions publica los artefactos solo después de que el trabajo de calidad haya terminado correctamente.')
 $notes.Add('')

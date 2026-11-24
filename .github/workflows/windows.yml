@@ -25,7 +25,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings -A clippy::too_many_arguments
       - name: Tests
-        run: cargo test --locked
+        run: cargo test --locked -- --test-threads=1
       - name: Optimized build
         run: cargo build --locked --release
 
